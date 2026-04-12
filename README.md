@@ -26,7 +26,6 @@ Connects Claude Desktop (or any MCP client) to a live ArcGIS Pro session, enabli
 - Claude Desktop
 - [uv](https://docs.astral.sh/uv/getting-started/installation/) — lightweight Python package manager
 
-> **Already using QGIS-MCP?** You already have `uv` installed. Skip straight to step 2.
 
 ---
 
