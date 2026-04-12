@@ -1,0 +1,479 @@
+"""
+ArcGIS Pro MCP Server for Claude Desktop
+=========================================
+This is the MCP server that Claude Desktop connects to.
+It relays tool calls to the ArcGIS Pro bridge via file-based IPC.
+
+Prerequisites:
+  pip install mcp
+
+Configure in %APPDATA%\\Claude\\claude_desktop_config.json:
+  {
+    "mcpServers": {
+      "arcgis-pro": {
+        "command": "python",
+        "args": ["C:/Users/User/Documents/MCP-ArcgisPro/arcgis_mcp_server.py"]
+      }
+    }
+  }
+
+Then restart Claude Desktop.
+"""
+
+import os
+import json
+import time
+import sys
+
+from mcp.server.fastmcp import FastMCP
+
+# ── IPC setup ────────────────────────────────────────────────────────────────
+IPC_DIR = os.path.join(os.path.expanduser("~"), ".arcgis_mcp")
+CMD_FILE = os.path.join(IPC_DIR, "command.json")
+RESULT_FILE = os.path.join(IPC_DIR, "result.json")
+LOCK_FILE = os.path.join(IPC_DIR, "lock")
+TIMEOUT = 15  # seconds to wait for ArcGIS Pro to respond
+
+os.makedirs(IPC_DIR, exist_ok=True)
+
+mcp = FastMCP(
+    "ArcGIS Pro",
+    instructions="""
+You are connected to a live ArcGIS Pro session via the MCP bridge.
+The user is assumed to have ArcGIS Pro open with a Map, Scene, or Globe already loaded.
+
+## Always start with ping()
+Call ping() first on every session to confirm the connection and read project status.
+
+## Verify files before using them
+- Use list_directory(path) to confirm exact filenames — never guess
+- Use describe_data(path) to check the coordinate system before any distance-based operation
+
+## Always check coordinate system before metric geoprocessing
+- If spatialReference.type is "Geographic" (degrees) → reproject first:
+  run_geoprocessing("management.Project", [input, output, WKID])
+- Common WKIDs: UTM Zone 49S = 32749, UTM Zone 50S = 32750, WGS 84 = 4326
+
+## Standard workflow
+ping → list_directory/describe_data → add layer → reproject if needed →
+geoprocessing → add result to map → zoom_to_layer → create_layout → export_layout
+
+## zoom_to_layer
+Only works when a map view is open. If the tool returns a warning instead of zooming,
+tell the user to open the map in ArcGIS Pro (double-click it in the Catalog pane).
+
+## When no specific tool covers the need
+Use execute_python(code) to run any arcpy/arcpy.mp code directly.
+Available variables: arcpy, os, proj (ArcGISProject), get_map().
+Set result = <value> to return data.
+
+## After every workflow
+Summarize: layers added, tools run, output file paths, CRS used.
+"""
+)
+
+# ── IPC helper ────────────────────────────────────────────────────────────────
+
+def _call(op: str, args: dict = None) -> dict:
+    """Send a command to ArcGIS Pro and wait for the result."""
+    if args is None:
+        args = {}
+
+    # Clean up any stale result
+    for f in (RESULT_FILE, LOCK_FILE):
+        try:
+            os.remove(f)
+        except FileNotFoundError:
+            pass
+
+    # Write command
+    with open(CMD_FILE, "w", encoding="utf-8") as f:
+        json.dump({"op": op, "args": args}, f)
+
+    # Wait for result
+    deadline = time.time() + TIMEOUT
+    while time.time() < deadline:
+        if os.path.exists(RESULT_FILE) and not os.path.exists(LOCK_FILE):
+            try:
+                with open(RESULT_FILE, "r", encoding="utf-8") as f:
+                    result = json.load(f)
+                os.remove(RESULT_FILE)
+                return result
+            except (json.JSONDecodeError, OSError):
+                time.sleep(0.1)
+                continue
+        time.sleep(0.1)
+
+    # Timeout — clean up
+    try:
+        os.remove(CMD_FILE)
+    except FileNotFoundError:
+        pass
+    return {"ok": False, "error": "Timeout: ArcGIS Pro bridge did not respond. Is pro_bridge.py running in the Python window?", "data": None}
+
+
+def _result_text(result: dict) -> str:
+    if result["ok"]:
+        return json.dumps(result["data"], indent=2, default=str)
+    return f"Error: {result['error']}"
+
+
+# ── MCP Tools ─────────────────────────────────────────────────────────────────
+
+@mcp.tool()
+def ping() -> str:
+    """
+    Test the connection to ArcGIS Pro and get the full project status:
+    version, project path, list of maps/scenes/globes, active map, and whether
+    a view is currently open. Always call this first to understand the current state
+    before running any other operations.
+    """
+    return _result_text(_call("ping"))
+
+
+@mcp.tool()
+def get_project_info() -> str:
+    """Get information about the currently open ArcGIS Pro project: file path, geodatabase, and list of maps."""
+    return _result_text(_call("get_project_info"))
+
+
+@mcp.tool()
+def get_active_map_name() -> str:
+    """Get the name of the active map currently shown in ArcGIS Pro."""
+    return _result_text(_call("get_active_map_name"))
+
+
+@mcp.tool()
+def list_layers(map_name: str = "") -> str:
+    """
+    List all layers in the active map (or a specific map by name).
+
+    Args:
+        map_name: Optional map name. If empty, uses the active map.
+    """
+    return _result_text(_call("list_layers", {"map_name": map_name}))
+
+
+@mcp.tool()
+def add_vector_layer(path: str) -> str:
+    """
+    Add a vector layer (shapefile, feature class, GeoJSON, etc.) to the active map.
+
+    Args:
+        path: Full path to the data source (e.g. C:/data/roads.shp or a feature class path)
+    """
+    return _result_text(_call("add_vector_layer", {"path": path}))
+
+
+@mcp.tool()
+def add_raster_layer(path: str) -> str:
+    """
+    Add a raster layer (GeoTIFF, IMG, etc.) to the active map.
+
+    Args:
+        path: Full path to the raster file (e.g. C:/data/dem.tif)
+    """
+    return _result_text(_call("add_raster_layer", {"path": path}))
+
+
+@mcp.tool()
+def remove_layer(name: str) -> str:
+    """
+    Remove a layer from the active map by name.
+
+    Args:
+        name: Exact layer name as shown in the Contents pane
+    """
+    return _result_text(_call("remove_layer", {"name": name}))
+
+
+@mcp.tool()
+def zoom_to_layer(name: str) -> str:
+    """
+    Zoom and pan the active map view to show the full extent of a layer.
+
+    Args:
+        name: Exact layer name as shown in the Contents pane
+    """
+    return _result_text(_call("zoom_to_layer", {"name": name}))
+
+
+@mcp.tool()
+def count_features(layer: str) -> str:
+    """
+    Count the total number of features (rows) in a layer.
+
+    Args:
+        layer: Exact layer name as shown in the Contents pane
+    """
+    return _result_text(_call("count_features", {"layer": layer}))
+
+
+@mcp.tool()
+def select_by_attribute(layer: str, where_clause: str, selection_type: str = "NEW_SELECTION") -> str:
+    """
+    Select features in a layer using a SQL WHERE clause.
+
+    Args:
+        layer: Exact layer name as shown in the Contents pane
+        where_clause: SQL expression (e.g. "population > 100000" or "type = 'road'")
+        selection_type: NEW_SELECTION, ADD_TO_SELECTION, REMOVE_FROM_SELECTION, SUBSET_SELECTION (default: NEW_SELECTION)
+    """
+    return _result_text(_call("select_by_attribute", {
+        "layer": layer,
+        "where_clause": where_clause,
+        "selection_type": selection_type,
+    }))
+
+
+@mcp.tool()
+def save_project() -> str:
+    """Save the current ArcGIS Pro project."""
+    return _result_text(_call("save_project"))
+
+
+@mcp.tool()
+def run_geoprocessing(tool: str, params: list) -> str:
+    """
+    Run any ArcPy geoprocessing tool by its dotted name.
+
+    Args:
+        tool: Dotted tool name, e.g. "analysis.Buffer", "management.CopyFeatures", "conversion.FeatureClassToShapefile"
+        params: List of positional parameters for the tool, e.g. ["roads", "output_buf", "100 Meters"]
+
+    Example: run_geoprocessing("analysis.Buffer", ["C:/data/roads.shp", "C:/data/roads_buf.shp", "500 Meters"])
+    """
+    return _result_text(_call("run_geoprocessing", {"tool": tool, "params": params}))
+
+
+@mcp.tool()
+def list_fields(dataset: str) -> str:
+    """
+    List all fields in a dataset (shapefile, feature class, table, layer name, etc.)
+    with field type, length, and alias. Use this before building WHERE clauses or
+    running attribute operations.
+
+    Args:
+        dataset: Full path to dataset, or layer name as shown in Contents pane
+    """
+    return _result_text(_call("list_fields", {"dataset": dataset}))
+
+
+@mcp.tool()
+def list_feature_classes(workspace: str = "", pattern: str = "*", feature_type: str = "") -> str:
+    """
+    List feature classes in a workspace (folder, GDB, or feature dataset).
+
+    Args:
+        workspace: Path to workspace/GDB (e.g. C:/data/mydb.gdb). Uses current workspace if empty.
+        pattern: Wildcard filter, e.g. "road*" (default: "*")
+        feature_type: Filter by geometry — Point, Line, Polygon, etc. (default: all)
+    """
+    return _result_text(_call("list_feature_classes", {
+        "workspace": workspace, "pattern": pattern, "feature_type": feature_type}))
+
+
+@mcp.tool()
+def list_rasters(workspace: str = "", pattern: str = "*", raster_type: str = "") -> str:
+    """
+    List raster datasets in a workspace.
+
+    Args:
+        workspace: Path to workspace/folder. Uses current workspace if empty.
+        pattern: Wildcard filter (default: "*")
+        raster_type: Filter by type — TIF, IMG, GRID, etc. (default: all)
+    """
+    return _result_text(_call("list_rasters", {
+        "workspace": workspace, "pattern": pattern, "raster_type": raster_type}))
+
+
+@mcp.tool()
+def list_tables(workspace: str = "", pattern: str = "*") -> str:
+    """
+    List standalone tables in a workspace (GDB tables, DBF files, etc.).
+
+    Args:
+        workspace: Path to workspace. Uses current workspace if empty.
+        pattern: Wildcard filter (default: "*")
+    """
+    return _result_text(_call("list_tables", {"workspace": workspace, "pattern": pattern}))
+
+
+@mcp.tool()
+def set_workspace(workspace: str) -> str:
+    """
+    Set arcpy.env.workspace — the default location for inputs/outputs when
+    no full path is provided to geoprocessing tools.
+
+    Args:
+        workspace: Full path to folder or GDB (e.g. C:/data or C:/data/mydb.gdb)
+    """
+    return _result_text(_call("set_workspace", {"workspace": workspace}))
+
+
+@mcp.tool()
+def get_workspace() -> str:
+    """Get the current arcpy.env.workspace setting."""
+    return _result_text(_call("get_workspace"))
+
+
+@mcp.tool()
+def clear_selection(layer: str) -> str:
+    """
+    Clear any active selection on a layer.
+
+    Args:
+        layer: Exact layer name as shown in the Contents pane
+    """
+    return _result_text(_call("clear_selection", {"layer": layer}))
+
+
+@mcp.tool()
+def get_unique_values(layer: str, field: str, limit: int = 100) -> str:
+    """
+    Get all unique values in a field. Useful for exploring data and building
+    WHERE clauses for select_by_attribute.
+
+    Args:
+        layer: Exact layer name as shown in the Contents pane
+        field: Field name to get unique values for
+        limit: Max number of unique values to return (default: 100)
+    """
+    return _result_text(_call("get_unique_values", {
+        "layer": layer, "field": field, "limit": limit}))
+
+
+@mcp.tool()
+def set_layer_visibility(layer: str, visible: bool) -> str:
+    """
+    Toggle a layer's visibility in the Contents pane.
+
+    Args:
+        layer: Exact layer name as shown in the Contents pane
+        visible: True to show, False to hide
+    """
+    return _result_text(_call("set_layer_visibility", {"layer": layer, "visible": visible}))
+
+
+@mcp.tool()
+def create_map(name: str = "Map") -> str:
+    """
+    Create a new map in the current ArcGIS Pro project.
+    After creation, open it by double-clicking it in the Catalog pane under Maps.
+
+    Args:
+        name: Name for the new map (default: "Map")
+    """
+    return _result_text(_call("create_map", {"name": name}))
+
+
+@mcp.tool()
+def describe_data(path: str) -> str:
+    """
+    Describe a dataset — returns coordinate system, geometry type, extent, and data type.
+    Use this to verify a file exists and check its projection before geoprocessing.
+
+    Args:
+        path: Full path to the dataset (shapefile, raster, feature class, GDB, etc.)
+    """
+    return _result_text(_call("describe_data", {"path": path}))
+
+
+@mcp.tool()
+def list_directory(path: str, pattern: str = "*") -> str:
+    """
+    List files in a directory, optionally filtered by pattern.
+
+    Args:
+        path: Full path to the directory (e.g. C:/Users/User/Documents/Rusunawa)
+        pattern: Glob pattern to filter results (e.g. "*.shp", "*.tif", default: "*")
+    """
+    return _result_text(_call("list_directory", {"path": path, "pattern": pattern}))
+
+
+@mcp.tool()
+def create_layout(name: str = "Layout", map_name: str = "", width: float = 11,
+                  height: float = 8.5, units: str = "INCH", margin: float = 0.5) -> str:
+    """
+    Create a new layout in the project with a map frame already added.
+    After creation, call export_layout() to export it as PDF/PNG/etc.
+
+    Args:
+        name: Layout name (default: "Layout")
+        map_name: Map to put in the frame — uses active map if empty
+        width: Page width (default: 11)
+        height: Page height (default: 8.5)
+        units: Page units — INCH, CENTIMETER, MILLIMETER, POINT (default: INCH)
+        margin: Frame margin from page edge in page units (default: 0.5)
+    """
+    return _result_text(_call("create_layout", {
+        "name": name, "map_name": map_name, "width": width,
+        "height": height, "units": units, "margin": margin,
+    }))
+
+
+@mcp.tool()
+def execute_python(code: str) -> str:
+    """
+    Execute arbitrary Python/arcpy code inside the ArcGIS Pro bridge.
+    Use this for complex arcpy.mp operations not covered by other tools.
+
+    Available variables: arcpy, os, proj (the ArcGISProject), get_map()
+    Set  result = <value>  in your code to return data.
+    print() output is captured and returned as 'stdout'.
+
+    Example:
+        code = \"\"\"
+        m = proj.listMaps()[0]
+        result = [lyr.name for lyr in m.listLayers()]
+        \"\"\"
+    """
+    return _result_text(_call("execute_python", {"code": code}))
+
+
+@mcp.tool()
+def list_layouts() -> str:
+    """List all layouts in the current ArcGIS Pro project with their page size and units."""
+    return _result_text(_call("list_layouts"))
+
+
+@mcp.tool()
+def export_layout(name: str, output: str, format: str = "PDF", dpi: int = 150) -> str:
+    """
+    Export a layout to a file (PDF, PNG, JPG, BMP, TIF, SVG, or EPS).
+
+    Args:
+        name: Exact layout name as shown in the Catalog pane
+        output: Full output file path including extension (e.g. C:/output/map.pdf)
+        format: Export format — PDF, PNG, JPG, BMP, TIF, SVG, EPS (default: PDF)
+        dpi: Resolution in dots per inch for raster formats (default: 150)
+    """
+    return _result_text(_call("export_layout", {
+        "name": name,
+        "output": output,
+        "format": format,
+        "dpi": dpi,
+    }))
+
+
+@mcp.tool()
+def get_layer_features(layer: str, limit: int = 10, fields: list = None) -> str:
+    """
+    Preview rows from a layer's attribute table.
+
+    Args:
+        layer: Exact layer name as shown in the Contents pane
+        limit: Number of rows to return (default: 10)
+        fields: List of field names to include. If empty, returns all non-geometry fields.
+    """
+    return _result_text(_call("get_layer_features", {
+        "layer": layer,
+        "limit": limit,
+        "fields": fields or [],
+    }))
+
+
+# ── Run ───────────────────────────────────────────────────────────────────────
+
+if __name__ == "__main__":
+    mcp.run()

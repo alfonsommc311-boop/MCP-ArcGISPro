@@ -1,0 +1,8 @@
+[project]
+name = "arcgis-pro-mcp"
+version = "0.1.0"
+description = "MCP bridge for controlling ArcGIS Pro from Claude Desktop"
+requires-python = ">=3.10"
+dependencies = [
+    "mcp",
+]
