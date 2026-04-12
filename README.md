@@ -47,7 +47,16 @@ powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | ie
 
 ### 3. Configure Claude Desktop
 
-Add the following to `%APPDATA%\Claude\claude_desktop_config.json`:
+Open your Claude Desktop config file and add the `arcgis-pro` entry under `mcpServers`.
+
+**Config file location:**
+
+| Installation | Path |
+|---|---|
+| Standard installer | `%APPDATA%\Claude\claude_desktop_config.json` |
+| Windows Store (Microsoft Store) | `%LOCALAPPDATA%\Packages\Claude_pzs8sxrjxfjjc\LocalCache\Roaming\Claude\claude_desktop_config.json` |
+
+Not sure which you have? Open Claude Desktop → Settings → check the title bar or press `Win+R` and try both paths.
 
 ```json
 {
@@ -56,7 +65,7 @@ Add the following to `%APPDATA%\Claude\claude_desktop_config.json`:
       "command": "C:/Users/<YourUsername>/.local/bin/uv.exe",
       "args": [
         "--directory",
-        "C:/path/to/MCP-ArcgisPro",
+        "C:/path/to/MCP-ArcGISPro",
         "run",
         "arcgis_mcp_server.py"
       ]
