@@ -35,7 +35,7 @@ Connects Claude Desktop (or any MCP client) to a live ArcGIS Pro session, enabli
 ### 1. Clone the repository
 
 ```bash
-git clone https://github.com/Geo2004/MCP-ArcgisPro.git
+git clone https://github.com/Geo2004/MCP-ArcGISPro.git
 ```
 
 ### 2. Install uv (if not already installed)
