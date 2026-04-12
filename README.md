@@ -56,7 +56,7 @@ Open your Claude Desktop config file and add the `arcgis-pro` entry under `mcpSe
 | Standard installer | `%APPDATA%\Claude\claude_desktop_config.json` |
 | Windows Store (Microsoft Store) | `%LOCALAPPDATA%\Packages\Claude_pzs8sxrjxfjjc\LocalCache\Roaming\Claude\claude_desktop_config.json` |
 
-Not sure which you have? Open Claude Desktop → Settings → check the title bar or press `Win+R` and try both paths.
+Not sure which you have? Open Claude Desktop → Settings → Developer → Hit Edit Config Button.
 
 ```json
 {
