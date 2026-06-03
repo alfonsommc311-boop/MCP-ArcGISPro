@@ -749,6 +749,7 @@ try:
         handler = HANDLERS.get(op)
         if not handler:
             return _err("Unknown command: '%s'" % op)
+        _t0 = time.time()
         try:
             result = handler(args or {})
         except SafetyError as e:
@@ -757,6 +758,11 @@ try:
             result = _err("%s: %s" % (type(e).__name__, e))
         if isinstance(result, dict):
             result.setdefault("protocol", getattr(CFG, "protocol_version", 1))
+        # same observability as the file poll loop (this is now the preferred path)
+        try:
+            audit(LOG, op, args or {}, result.get("ok"), (time.time() - _t0) * 1000)
+        except Exception:
+            pass
         return result
 
     _transport = TransportServer(_dispatch)

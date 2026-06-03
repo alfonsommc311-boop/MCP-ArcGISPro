@@ -116,6 +116,13 @@ def test_safety():
     except bs.SafetyError:
         blk = True
     check("blocklisted tool rejected", blk)
+    # blocklist can't be bypassed via the equivalent one-part form
+    bypass_blocked = False
+    try:
+        bs.check_gp_tool("Delete_management", cfg)
+    except bs.SafetyError:
+        bypass_blocked = True
+    check("blocklist not bypassable via alias form", bypass_blocked)
 
     # safe_mode off -> anything passes
     cfg.safe_mode = False

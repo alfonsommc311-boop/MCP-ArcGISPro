@@ -9,6 +9,18 @@ class SafetyError(Exception):
     """Raised when a command is rejected by policy."""
 
 
+def _tool_aliases(tool):
+    """Both equivalent forms of a GP tool name: 'management.Delete' <-> 'Delete_management'."""
+    forms = {tool}
+    if "." in tool:
+        tbx, name = tool.split(".", 1)
+        forms.add("%s_%s" % (name, tbx))
+    elif "_" in tool:
+        name, tbx = tool.rsplit("_", 1)
+        forms.add("%s.%s" % (tbx, name))
+    return forms
+
+
 def check_gp_tool(tool: str, cfg) -> None:
     """Validate a GP tool name against policy.
 
@@ -20,7 +32,12 @@ def check_gp_tool(tool: str, cfg) -> None:
         return
     if not tool:
         raise SafetyError("empty GP tool name")
-    if tool in getattr(cfg, "blocked_gp_tools", []):
+    # Blocklist: compare canonicalized aliases so a block on 'management.Delete'
+    # cannot be bypassed by calling 'Delete_management' (or vice versa).
+    blocked_forms = set()
+    for b in (getattr(cfg, "blocked_gp_tools", []) or []):
+        blocked_forms |= _tool_aliases(b)
+    if _tool_aliases(tool) & blocked_forms:
         raise SafetyError("GP tool '{}' is blocked by policy.".format(tool))
     prefixes = getattr(cfg, "allowed_gp_prefixes", []) or []
     if not prefixes:
