@@ -654,8 +654,13 @@ HANDLERS = {
     "execute_python":      handle_execute_python,
     "list_layouts":        handle_list_layouts,
     "export_layout":       handle_export_layout,
-    "recipe":              handle_recipe,
 }
+
+# Expose recipes only when the hardening package actually loaded — otherwise the
+# 'recipe' op would import hardening.recipes and raise ModuleNotFoundError. When it
+# is not registered, run_recipe gets a clean "Unknown command: 'recipe'" instead.
+if _HARDENING:
+    HANDLERS["recipe"] = handle_recipe
 
 # ── Background polling thread ─────────────────────────────────────────────────
 
