@@ -32,9 +32,19 @@ IPC_DIR = os.path.join(os.path.expanduser("~"), ".arcgis_mcp")
 CMD_FILE = os.path.join(IPC_DIR, "command.json")
 RESULT_FILE = os.path.join(IPC_DIR, "result.json")
 LOCK_FILE = os.path.join(IPC_DIR, "lock")
-TIMEOUT = 15  # seconds to wait for ArcGIS Pro to respond
-
 os.makedirs(IPC_DIR, exist_ok=True)
+
+
+def _load_timeout(default=60):
+    """Timeout is configurable via <ipc_dir>/config.json (hardening layer)."""
+    try:
+        with open(os.path.join(IPC_DIR, "config.json"), "r", encoding="utf-8") as f:
+            return int(json.load(f).get("timeout_seconds", default))
+    except Exception:
+        return default
+
+
+TIMEOUT = _load_timeout()  # seconds to wait for ArcGIS Pro to respond (was 15)
 
 mcp = FastMCP(
     "ArcGIS Pro",
