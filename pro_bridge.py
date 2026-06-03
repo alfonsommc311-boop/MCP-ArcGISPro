@@ -598,7 +598,14 @@ def handle_recipe(args):
     fn = RECIPES.get(name)
     if not fn:
         raise ValueError("Unknown recipe '%s'. Available: %s" % (name, sorted(RECIPES)))
-    return _ok(fn(arcpy=arcpy, m=_proj.activeMap, proj=_proj, **params))
+    # Use _get_map() (falls back to the first map when no view is active) instead of
+    # _proj.activeMap (None without an open view). Defensive None fallback for recipes
+    # that don't need a map (e.g. batch_export_layouts).
+    try:
+        _m = _get_map()
+    except Exception:
+        _m = None
+    return _ok(fn(arcpy=arcpy, m=_m, proj=_proj, **params))
 
 
 HANDLERS = {
