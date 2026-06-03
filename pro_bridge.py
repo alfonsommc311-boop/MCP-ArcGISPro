@@ -74,7 +74,10 @@ except Exception as _e:  # noqa: BLE001 - graceful fallback by design
 
     class _CFG:
         protocol_version = 1
-        auto_create_map = False
+        # Fallback (no hardening) preserves the ORIGINAL base-bridge behavior of
+        # auto-creating a map. The safer auto_create_map=False default only applies
+        # when the hardening config is actually in effect.
+        auto_create_map = True
     CFG = _CFG()
 
     class SafetyError(Exception):
