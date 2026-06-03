@@ -98,6 +98,16 @@ def test_safety():
         denied = True
     check("unknown toolbox blocked in safe mode", denied)
 
+    # legacy one-part names: 'Buffer_analysis' allowed, 'DoBad_evil' blocked
+    def _blk(t):
+        try:
+            bs.check_gp_tool(t, cfg); return False
+        except bs.SafetyError:
+            return True
+    check("one-part Buffer_analysis allowed", not _blk("Buffer_analysis"))
+    check("one-part CopyFeatures_management allowed", not _blk("CopyFeatures_management"))
+    check("one-part DoBad_evil blocked", _blk("DoBad_evil"))
+
     # blocklist wins
     cfg.blocked_gp_tools = ["management.Delete"]
     blk = False

@@ -45,8 +45,21 @@ arcpy.env.overwriteOutput = True
 import sys
 _HARDENING = False
 try:
-    _base = os.path.dirname(os.path.abspath(__file__))
-    if _base not in sys.path:
+    # Locate the repo dir robustly. __file__ is set when launched via the toolbox;
+    # in the documented `exec(open(...).read())` manual launch it is undefined, so
+    # fall back to scanning cwd + sys.path for the 'hardening' package.
+    _base = None
+    try:
+        _base = os.path.dirname(os.path.abspath(__file__))
+    except NameError:
+        for _cand in [os.getcwd()] + list(sys.path):
+            try:
+                if _cand and os.path.isdir(os.path.join(_cand, "hardening")):
+                    _base = _cand
+                    break
+            except Exception:
+                pass
+    if _base and _base not in sys.path:
         sys.path.insert(0, _base)
     from hardening.bridge_config import BridgeConfig
     from hardening.bridge_safety import check_gp_tool, check_execute_python, SafetyError
