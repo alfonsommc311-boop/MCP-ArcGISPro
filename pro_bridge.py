@@ -269,7 +269,14 @@ def handle_run_geoprocessing(args):
     check_gp_tool(tool_path, CFG)
     # Resolve any params that are layer NAMES into their dataSource path.
     # No-op for distances ("10 Meters"), field names, numbers, output paths.
-    params = [resolve_param(arcpy, _proj.activeMap, p) for p in params]
+    # Use _get_map() (falls back to the first map when no view is active) instead
+    # of _proj.activeMap (None without an open view). Defensive: with no map at all,
+    # resolve against None so path inputs still pass through unchanged.
+    try:
+        _gp_map = _get_map()
+    except Exception:
+        _gp_map = None
+    params = [resolve_param(arcpy, _gp_map, p) for p in params]
     parts = tool_path.split(".")
     if len(parts) == 2:
         fn = getattr(getattr(arcpy, parts[0]), parts[1])

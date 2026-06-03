@@ -85,6 +85,14 @@ def main():
         check("each concurrent response correlated correctly",
               all(results.get(i) == i for i in range(25)))
 
+        # P1: connecting to a dead port -> 'transport-connect:' (safe to fall back)
+        dead = bt.send_request(99, "ping", timeout=2)
+        check("dead port -> transport-connect (pre-dispatch)",
+              str(dead.get("error", "")).startswith("transport-connect:"))
+        # a successful response never carries a transport-* error
+        good = bt.send_request(port, "ping", timeout=5)
+        check("live request has no transport error", not str(good.get("error", "") or "").startswith("transport-"))
+
         # latency sanity: a request returns well under the old 0.1s poll floor
         t0 = time.time()
         bt.send_request(port, "ping", timeout=5)

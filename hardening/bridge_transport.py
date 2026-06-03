@@ -167,15 +167,25 @@ class TransportServer:
 # ── client (runs in the MCP server process) ──────────────────────────────────
 
 def send_request(port, op, args=None, host=HOST, timeout=60):
-    """One-shot request. Returns the response dict, or an error dict on failure."""
+    """One-shot request.
+
+    Distinguishes a PRE-dispatch connection failure ('transport-connect:', safe to
+    retry / fall back to another transport) from a failure AFTER the request was
+    sent ('transport-inflight:', must NOT be retried — the command may still be
+    executing on the server and retrying would duplicate its side effects).
+    """
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     s.settimeout(timeout)
     try:
-        s.connect((host, port))
-        _send_msg(s, {"id": _next_id(), "op": op, "args": args or {}})
-        return _recv_msg(s)
-    except (socket.timeout, ConnectionError, OSError) as e:
-        return {"ok": False, "error": "transport: %s" % e, "data": None}
+        try:
+            s.connect((host, port))
+        except (socket.timeout, ConnectionError, OSError) as e:
+            return {"ok": False, "error": "transport-connect: %s" % e, "data": None}
+        try:
+            _send_msg(s, {"id": _next_id(), "op": op, "args": args or {}})
+            return _recv_msg(s)
+        except (socket.timeout, ConnectionError, OSError) as e:
+            return {"ok": False, "error": "transport-inflight: %s" % e, "data": None}
     finally:
         try:
             s.close()

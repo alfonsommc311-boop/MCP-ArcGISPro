@@ -96,8 +96,17 @@ def _call(op: str, args: dict = None) -> dict:
         from hardening.bridge_transport import read_port_file, send_request
         host, port = read_port_file(IPC_DIR)
         resp = send_request(port, op, args, host=host, timeout=TIMEOUT)
-        if not str(resp.get("error", "")).startswith("transport:"):
-            return resp  # socket worked
+        err = str(resp.get("error", "") or "")
+        if err.startswith("transport-inflight:"):
+            # Request was already sent and may still be executing in ArcGIS Pro.
+            # Do NOT retry over file IPC — that would duplicate side effects.
+            return {"ok": False, "data": None,
+                    "error": "Socket request did not return within the timeout and was NOT "
+                             "retried (to avoid duplicate execution). The operation may still "
+                             "be running in ArcGIS Pro; check the result before re-issuing."}
+        if not err.startswith("transport-connect:"):
+            return resp  # socket worked (success, or a normal handler error)
+        # transport-connect: socket was unavailable before dispatch -> safe to fall back
     except Exception:
         pass  # no port file / transport unavailable -> fall back
     return _call_via_files(op, args)
