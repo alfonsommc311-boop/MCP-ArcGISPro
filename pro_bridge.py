@@ -720,10 +720,11 @@ def _poll_loop():
                 # hardening: stamp protocol version + write an audit line
                 if isinstance(result, dict):
                     result.setdefault("protocol", getattr(CFG, "protocol_version", 1))
-                try:
-                    audit(LOG, op, cmd.get("args", {}), result.get("ok"), (time.time() - _t0) * 1000)
-                except Exception:
-                    pass
+                if getattr(CFG, "audit", True):
+                    try:
+                        audit(LOG, op, cmd.get("args", {}), result.get("ok"), (time.time() - _t0) * 1000)
+                    except Exception:
+                        pass
 
                 with open(RESULT_FILE, "w", encoding="utf-8") as f:
                     json.dump(result, f, default=str)
@@ -772,10 +773,11 @@ try:
         if isinstance(result, dict):
             result.setdefault("protocol", getattr(CFG, "protocol_version", 1))
         # same observability as the file poll loop (this is now the preferred path)
-        try:
-            audit(LOG, op, args or {}, result.get("ok"), (time.time() - _t0) * 1000)
-        except Exception:
-            pass
+        if getattr(CFG, "audit", True):
+            try:
+                audit(LOG, op, args or {}, result.get("ok"), (time.time() - _t0) * 1000)
+            except Exception:
+                pass
         return result
 
     _ttoken = os.urandom(8).hex()  # per-launch nonce so clients can verify the peer
