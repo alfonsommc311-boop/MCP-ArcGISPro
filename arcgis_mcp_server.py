@@ -85,7 +85,26 @@ Summarize: layers added, tools run, output file paths, CRS used.
 # ── IPC helper ────────────────────────────────────────────────────────────────
 
 def _call(op: str, args: dict = None) -> dict:
-    """Send a command to ArcGIS Pro and wait for the result."""
+    """Prefer the socket transport (low latency, no poll); fall back to file IPC."""
+    if args is None:
+        args = {}
+    try:
+        import sys as _sys
+        _here = os.path.dirname(os.path.abspath(__file__))
+        if _here not in _sys.path:
+            _sys.path.insert(0, _here)
+        from hardening.bridge_transport import read_port_file, send_request
+        host, port = read_port_file(IPC_DIR)
+        resp = send_request(port, op, args, host=host, timeout=TIMEOUT)
+        if not str(resp.get("error", "")).startswith("transport:"):
+            return resp  # socket worked
+    except Exception:
+        pass  # no port file / transport unavailable -> fall back
+    return _call_via_files(op, args)
+
+
+def _call_via_files(op: str, args: dict = None) -> dict:
+    """Send a command to ArcGIS Pro and wait for the result (file IPC fallback)."""
     if args is None:
         args = {}
 

@@ -686,6 +686,12 @@ def _poll_loop():
             print(f"[MCP Bridge] Poll error: {e}")
             time.sleep(0.1)
 
+    # loop exited (_bridge_active=False) — also stop the socket transport if running
+    try:
+        _transport.stop()
+    except Exception:
+        pass
+
 # ── Start ─────────────────────────────────────────────────────────────────────
 
 _thread = threading.Thread(target=_poll_loop, daemon=True, name="MCP-Bridge")
@@ -695,3 +701,29 @@ print(f"[MCP Bridge] Bridge is active. Listening for commands from Claude Deskto
 print(f"[MCP Bridge] Project : {_proj.filePath or '(unsaved)'}")
 print(f"[MCP Bridge] IPC dir : {IPC_DIR}")
 print(f"[MCP Bridge] To stop : _bridge_active = False")
+
+# ── Optional socket transport (additive; file IPC stays as the fallback) ──────
+_transport = None
+try:
+    from hardening.bridge_transport import TransportServer, write_port_file
+
+    def _dispatch(op, args):
+        handler = HANDLERS.get(op)
+        if not handler:
+            return _err("Unknown command: '%s'" % op)
+        try:
+            result = handler(args or {})
+        except SafetyError as e:
+            result = _err("Policy: %s" % e)
+        except Exception as e:
+            result = _err("%s: %s" % (type(e).__name__, e))
+        if isinstance(result, dict):
+            result.setdefault("protocol", getattr(CFG, "protocol_version", 1))
+        return result
+
+    _transport = TransportServer(_dispatch)
+    _tport = _transport.start()
+    write_port_file(IPC_DIR, _tport)
+    print("[MCP Bridge] Socket transport on 127.0.0.1:%d (file IPC still active)." % _tport)
+except Exception as _te:
+    print("[MCP Bridge] Socket transport not started (%r); file IPC only." % _te)
