@@ -578,6 +578,19 @@ def handle_export_layout(args):
 
 # ── Dispatch table ────────────────────────────────────────────────────────────
 
+def handle_recipe(args):
+    """Run a high-value recipe by name (qa_layer, export_attributes_csv, batch_export_layouts)."""
+    name = args.get("name")
+    params = args.get("params", {}) or {}
+    if not name:
+        raise ValueError("'name' is required (e.g. 'qa_layer')")
+    from hardening.recipes import RECIPES
+    fn = RECIPES.get(name)
+    if not fn:
+        raise ValueError("Unknown recipe '%s'. Available: %s" % (name, sorted(RECIPES)))
+    return _ok(fn(arcpy=arcpy, m=_proj.activeMap, proj=_proj, **params))
+
+
 HANDLERS = {
     "ping":                handle_ping,
     "get_project_info":    handle_get_project_info,
@@ -608,6 +621,7 @@ HANDLERS = {
     "execute_python":      handle_execute_python,
     "list_layouts":        handle_list_layouts,
     "export_layout":       handle_export_layout,
+    "recipe":              handle_recipe,
 }
 
 # ── Background polling thread ─────────────────────────────────────────────────

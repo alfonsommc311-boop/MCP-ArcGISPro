@@ -483,6 +483,27 @@ def get_layer_features(layer: str, limit: int = 10, fields: list = None) -> str:
     }))
 
 
+@mcp.tool()
+def run_recipe(name: str, params: dict = None) -> str:
+    """
+    Run a high-value 'recipe' (multi-step workflow) by name.
+
+    Recipes:
+      - qa_layer:               QC report for a layer (CRS, count, fields, null
+                                geometry, issues).  params: {"layer_name": "..."}
+      - export_attributes_csv:  layer attribute table -> CSV.
+                                params: {"layer_name": "...", "out_path": "C:/out/x.csv",
+                                         "fields": [...optional...], "limit": 100}
+      - batch_export_layouts:   export ALL layouts to PDF/PNG/JPG/TIF.
+                                params: {"out_dir": "C:/out", "fmt": "PDF", "dpi": 150}
+
+    Args:
+        name: recipe name
+        params: dict of recipe arguments
+    """
+    return _result_text(_call("recipe", {"name": name, "params": params or {}}))
+
+
 # ── Run ───────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
