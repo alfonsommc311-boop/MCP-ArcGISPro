@@ -584,7 +584,10 @@ def handle_recipe(args):
     params = args.get("params", {}) or {}
     if not name:
         raise ValueError("'name' is required (e.g. 'qa_layer')")
-    from hardening.recipes import RECIPES
+    import importlib
+    from hardening import recipes as _recipes_mod
+    importlib.reload(_recipes_mod)  # hot-reload so new/edited recipes need no bridge restart
+    RECIPES = _recipes_mod.RECIPES
     fn = RECIPES.get(name)
     if not fn:
         raise ValueError("Unknown recipe '%s'. Available: %s" % (name, sorted(RECIPES)))

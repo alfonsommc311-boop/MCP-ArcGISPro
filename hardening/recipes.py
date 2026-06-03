@@ -167,8 +167,58 @@ def batch_export_layouts(proj, out_dir, fmt="PDF", dpi=150, **_):
     }
 
 
+# ── Recipe 4: numeric field statistics ───────────────────────────────────────
+
+def field_stats(arcpy, m, layer_name, field, **_):
+    """Min/max/mean/sum/count/nulls for a numeric field (QC of measurements)."""
+    lyr = _find_layer(m, layer_name)
+    src = getattr(lyr, "dataSource", None) or lyr
+    values, nulls = [], 0
+    with arcpy.da.SearchCursor(src, [field]) as cur:
+        for row in cur:
+            v = row[0]
+            if v is None:
+                nulls += 1
+            else:
+                values.append(v)
+    n = len(values)
+    numeric = all(isinstance(v, (int, float)) for v in values) if values else False
+    stats = {"count": n, "nulls": nulls}
+    if n and numeric:
+        stats.update({
+            "min": min(values),
+            "max": max(values),
+            "sum": sum(values),
+            "mean": round(sum(values) / n, 4),
+        })
+    return {"recipe": "field_stats", "layer": layer_name, "field": field,
+            "numeric": numeric, "stats": stats}
+
+
+# ── Recipe 5: categorical value counts ───────────────────────────────────────
+
+def value_counts(arcpy, m, layer_name, field, top=20, **_):
+    """Frequency of each distinct value in a field (categorical QC)."""
+    lyr = _find_layer(m, layer_name)
+    src = getattr(lyr, "dataSource", None) or lyr
+    counts, nulls = {}, 0
+    with arcpy.da.SearchCursor(src, [field]) as cur:
+        for row in cur:
+            v = row[0]
+            if v is None:
+                nulls += 1
+            else:
+                counts[v] = counts.get(v, 0) + 1
+    ordered = sorted(counts.items(), key=lambda kv: kv[1], reverse=True)[:top]
+    return {"recipe": "value_counts", "layer": layer_name, "field": field,
+            "distinct": len(counts), "nulls": nulls,
+            "top": [{"value": k, "count": c} for k, c in ordered]}
+
+
 RECIPES = {
     "qa_layer": qa_layer,
     "export_attributes_csv": export_attributes_csv,
     "batch_export_layouts": batch_export_layouts,
+    "field_stats": field_stats,
+    "value_counts": value_counts,
 }

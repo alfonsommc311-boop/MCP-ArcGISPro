@@ -145,9 +145,40 @@ def test_batch_export():
     check("unsupported format -> ValueError", bad)
 
 
+def test_field_stats():
+    print("[field_stats]")
+    fields = [F("P_mm", "Integer")]
+    table = [{"P_mm": 8}, {"P_mm": 2}, {"P_mm": None}, {"P_mm": 5}]
+    arcpy = FakeArcpy(fields, Desc("Point", SR("x", "Projected", 32718, "Meter")), 4, table, [])
+    m = Map([Layer("pts", "src")])
+    r = R.field_stats(arcpy, m, "pts", "P_mm")
+    s = r["stats"]
+    check("count excludes null", s["count"] == 3)
+    check("nulls counted", s["nulls"] == 1)
+    check("min", s["min"] == 2)
+    check("max", s["max"] == 8)
+    check("sum", s["sum"] == 15)
+    check("mean", s["mean"] == 5.0)
+    check("flagged numeric", r["numeric"] is True)
+
+
+def test_value_counts():
+    print("[value_counts]")
+    fields = [F("ubic", "String")]
+    table = [{"ubic": "LD"}, {"ubic": "LI"}, {"ubic": "LD"}, {"ubic": None}, {"ubic": "LD"}]
+    arcpy = FakeArcpy(fields, Desc("Point", SR("x", "Projected", 32718, "Meter")), 5, table, [])
+    m = Map([Layer("pts", "src")])
+    r = R.value_counts(arcpy, m, "pts", "ubic")
+    check("distinct count", r["distinct"] == 2)
+    check("nulls counted", r["nulls"] == 1)
+    check("top value is LD with 3", r["top"][0] == {"value": "LD", "count": 3})
+
+
 if __name__ == "__main__":
     test_qa_layer()
     test_export_csv()
     test_batch_export()
+    test_field_stats()
+    test_value_counts()
     print("\n{} passed, {} failed".format(_passed, _failed))
     sys.exit(1 if _failed else 0)
