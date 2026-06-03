@@ -267,16 +267,19 @@ def handle_run_geoprocessing(args):
     if not tool_path:
         raise ValueError("'tool' is required (e.g. 'analysis.Buffer')")
     check_gp_tool(tool_path, CFG)
-    # Resolve any params that are layer NAMES into their dataSource path.
-    # No-op for distances ("10 Meters"), field names, numbers, output paths.
-    # Use _get_map() (falls back to the first map when no view is active) instead
-    # of _proj.activeMap (None without an open view). Defensive: with no map at all,
-    # resolve against None so path inputs still pass through unchanged.
-    try:
-        _gp_map = _get_map()
-    except Exception:
-        _gp_map = None
-    params = [resolve_param(arcpy, _gp_map, p) for p in params]
+    # Resolve ONLY the first positional parameter if it is a layer NAME -> its
+    # dataSource path. The first argument is the input dataset for virtually every
+    # tool; resolving every string would corrupt non-dataset args (field names,
+    # SQL/value strings) that happen to match a layer name, e.g.
+    # management.AddField(table, "Roads", "TEXT") when a "Roads" layer exists.
+    # Use _get_map() (falls back to the first map when no view is active). For tools
+    # with additional dataset inputs, pass those as full paths.
+    if params:
+        try:
+            _gp_map = _get_map()
+        except Exception:
+            _gp_map = None
+        params = [resolve_param(arcpy, _gp_map, params[0])] + list(params[1:])
     parts = tool_path.split(".")
     if len(parts) == 2:
         fn = getattr(getattr(arcpy, parts[0]), parts[1])
