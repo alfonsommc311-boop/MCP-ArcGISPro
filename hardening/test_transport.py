@@ -61,9 +61,9 @@ def main():
         # port file round-trip (per-session discovery)
         import tempfile
         d = tempfile.mkdtemp()
-        bt.write_port_file(d, port)
-        host2, port2 = bt.read_port_file(d)
-        check("port file round-trip", port2 == port and host2 == bt.HOST)
+        bt.write_port_file(d, port, "tok123")
+        host2, port2, tok2 = bt.read_port_file(d)
+        check("port file round-trip (host/port/token)", port2 == port and host2 == bt.HOST and tok2 == "tok123")
 
         # concurrency: many simultaneous clients, each gets the correct answer
         results = {}
@@ -92,6 +92,18 @@ def main():
         # a successful response never carries a transport-* error
         good = bt.send_request(port, "ping", timeout=5)
         check("live request has no transport error", not str(good.get("error", "") or "").startswith("transport-"))
+
+        # P2: token handshake — wrong token is treated as a pre-dispatch failure
+        tsrv = bt.TransportServer(dispatch, token="secret")
+        tport = tsrv.start()
+        try:
+            okt = bt.send_request(tport, "ping", token="secret", timeout=5)
+            check("correct token -> request succeeds", okt.get("data") == "pong")
+            badt = bt.send_request(tport, "ping", token="WRONG", timeout=5)
+            check("wrong token -> transport-connect (fallback)",
+                  str(badt.get("error", "")).startswith("transport-connect:"))
+        finally:
+            tsrv.stop()
 
         # latency sanity: a request returns well under the old 0.1s poll floor
         t0 = time.time()

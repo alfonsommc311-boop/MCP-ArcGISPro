@@ -67,6 +67,14 @@ def test_config_roundtrip():
 def test_safety():
     print("[safety]")
     cfg = bc.BridgeConfig()  # safe_mode True
+    # destructive tools blocked by DEFAULT (both alias forms)
+    def _isblk(t):
+        try:
+            bs.check_gp_tool(t, bc.BridgeConfig()); return False
+        except bs.SafetyError:
+            return True
+    check("management.Delete blocked by default", _isblk("management.Delete"))
+    check("Delete_management blocked by default (alias)", _isblk("Delete_management"))
     # execute_python blocked in safe mode
     blocked = False
     try:

@@ -65,18 +65,18 @@ def pick_free_port(host=HOST):
         s.close()
 
 
-def write_port_file(ipc_dir, port):
+def write_port_file(ipc_dir, port, token=None):
     os.makedirs(ipc_dir, exist_ok=True)
     path = os.path.join(ipc_dir, "port.json")
     with open(path, "w", encoding="utf-8") as f:
-        json.dump({"host": HOST, "port": int(port)}, f)
+        json.dump({"host": HOST, "port": int(port), "token": token}, f)
     return path
 
 
 def read_port_file(ipc_dir):
     with open(os.path.join(ipc_dir, "port.json"), "r", encoding="utf-8") as f:
         d = json.load(f)
-    return d.get("host", HOST), int(d["port"])
+    return d.get("host", HOST), int(d["port"]), d.get("token")
 
 
 # ── server (runs inside ArcGIS Pro) ──────────────────────────────────────────
@@ -85,11 +85,12 @@ class TransportServer:
     """Accepts connections on per-connection threads; dispatches requests serially
     on ONE worker thread. `dispatch(op, args)` returns a dict result."""
 
-    def __init__(self, dispatch, host=HOST, port=0):
+    def __init__(self, dispatch, host=HOST, port=0, token=None):
         self.dispatch = dispatch
         self.host = host
         self.port = port
-        self._srv = None
+        self.token = token          # greeted on every connection so clients can
+        self._srv = None            # confirm the peer is really this bridge
         self._stop = threading.Event()
         self._q = queue.Queue()
 
@@ -116,6 +117,10 @@ class TransportServer:
 
     def _handle_conn(self, conn):
         try:
+            try:
+                _send_msg(conn, {"hello": self.token})  # greet so clients can verify the peer
+            except OSError:
+                return
             while not self._stop.is_set():
                 try:
                     req = _recv_msg(conn)
@@ -166,21 +171,29 @@ class TransportServer:
 
 # ── client (runs in the MCP server process) ──────────────────────────────────
 
-def send_request(port, op, args=None, host=HOST, timeout=60):
+def send_request(port, op, args=None, host=HOST, timeout=60, token=None):
     """One-shot request.
 
-    Distinguishes a PRE-dispatch connection failure ('transport-connect:', safe to
-    retry / fall back to another transport) from a failure AFTER the request was
-    sent ('transport-inflight:', must NOT be retried — the command may still be
-    executing on the server and retrying would duplicate its side effects).
+    Performs a fast handshake first: the bridge greets every connection with its
+    token. If the greeting is missing/mismatched (e.g. a stale port.json now owned
+    by another process), this is reported as a PRE-dispatch 'transport-connect:'
+    failure — safe to fall back to file IPC. Only failures AFTER the request was
+    actually sent to a verified bridge are 'transport-inflight:' (must NOT be
+    retried — the command may be executing and retrying would duplicate effects).
     """
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    s.settimeout(timeout)
     try:
+        # connect + handshake on a short timeout so a wrong/dead peer fails fast
+        s.settimeout(min(timeout, 5) or 5)
         try:
             s.connect((host, port))
-        except (socket.timeout, ConnectionError, OSError) as e:
+            hello = _recv_msg(s)
+        except (socket.timeout, ConnectionError, OSError, ValueError, json.JSONDecodeError) as e:
             return {"ok": False, "error": "transport-connect: %s" % e, "data": None}
+        if token is not None and (not isinstance(hello, dict) or hello.get("hello") != token):
+            return {"ok": False, "error": "transport-connect: peer is not the MCP bridge", "data": None}
+        # verified peer -> send the real request on the full timeout
+        s.settimeout(timeout)
         try:
             _send_msg(s, {"id": _next_id(), "op": op, "args": args or {}})
             return _recv_msg(s)

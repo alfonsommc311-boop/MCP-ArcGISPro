@@ -768,9 +768,10 @@ try:
             pass
         return result
 
-    _transport = TransportServer(_dispatch)
+    _ttoken = os.urandom(8).hex()  # per-launch nonce so clients can verify the peer
+    _transport = TransportServer(_dispatch, token=_ttoken)
     _tport = _transport.start()
-    write_port_file(IPC_DIR, _tport)
+    write_port_file(IPC_DIR, _tport, _ttoken)
     print("[MCP Bridge] Socket transport on 127.0.0.1:%d (file IPC still active)." % _tport)
 except Exception as _te:
     print("[MCP Bridge] Socket transport not started (%r); file IPC only." % _te)

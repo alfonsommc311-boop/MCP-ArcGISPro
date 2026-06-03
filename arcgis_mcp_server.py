@@ -94,8 +94,8 @@ def _call(op: str, args: dict = None) -> dict:
         if _here not in _sys.path:
             _sys.path.insert(0, _here)
         from hardening.bridge_transport import read_port_file, send_request
-        host, port = read_port_file(IPC_DIR)
-        resp = send_request(port, op, args, host=host, timeout=TIMEOUT)
+        host, port, token = read_port_file(IPC_DIR)
+        resp = send_request(port, op, args, host=host, timeout=TIMEOUT, token=token)
         err = str(resp.get("error", "") or "")
         if err.startswith("transport-inflight:"):
             # Request was already sent and may still be executing in ArcGIS Pro.
