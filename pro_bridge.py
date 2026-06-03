@@ -1,9 +1,19 @@
 """
 ArcGIS Pro MCP Bridge
 =====================
-Run this script ONCE in ArcGIS Pro's built-in Python window:
+Launch ONCE per ArcGIS Pro session. PREFERRED: use the "MCP Bridge" toolbox
+(Start button) — it sets __file__ so the optional hardening/recipes/socket layer
+loads automatically.
 
-    exec(open(r"C:/Users/User/Documents/MCP-ArcgisPro/pro_bridge.py").read())
+Manual alternative in the Python window — pass __file__ so the hardening package
+(which lives next to this script) is importable; without it, recipes/socket are
+silently unavailable:
+
+    p = r"C:/path/to/MCP-ArcGISPro/pro_bridge.py"
+    exec(open(p).read(), {"__file__": p})
+
+(Plain `exec(open(p).read())` still runs the core bridge, but only with the
+built-in defaults — no hardening, no recipes, no socket transport.)
 
 Strategy:
   - arcpy.mp.ArcGISProject("CURRENT") is called ONCE in the main thread and cached.
