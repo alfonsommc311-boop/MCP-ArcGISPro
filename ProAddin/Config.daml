@@ -1,0 +1,82 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  ArcGIS Pro Add-in declaration (DAML).
+  Declares one auto-loaded Module + a ribbon tab "MCP Bridge" with 3 buttons.
+  defaultAssembly / defaultNamespace must match your built DLL and root namespace.
+-->
+<ArcGIS defaultAssembly="MCPBridge.dll"
+        defaultNamespace="MCPBridge"
+        xmlns="http://schemas.esri.com/DADF/Registry"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://schemas.esri.com/DADF/Registry file:///C:/Program%20Files/ArcGIS/Pro/bin/ArcGIS.Desktop.Framework.xsd">
+
+  <AddInInfo id="{8f3a2b10-1c4e-4d9a-bb2f-0a1c2d3e4f50}" version="0.1.0" desktopVersion="3.4">
+    <Name>MCP Bridge</Name>
+    <Description>One-click start/stop of the ArcGIS Pro MCP bridge, with auto-start on project open.</Description>
+    <Image>Images\AddinDesktop32.png</Image>
+    <Author>Your Company</Author>
+    <Company>Your Company</Company>
+    <Date>2026-06-03</Date>
+    <Subject>Framework</Subject>
+  </AddInInfo>
+
+  <modules>
+    <!-- autoLoad=true so the module loads at startup and can subscribe to ProjectOpenedEvent -->
+    <insertModule id="MCPBridge_Module"
+                  className="Module1"
+                  autoLoad="true"
+                  caption="MCP Bridge Module">
+      <tabs>
+        <tab id="MCPBridge_Tab" caption="MCP Bridge" keytip="MB">
+          <group refID="MCPBridge_Group" />
+        </tab>
+      </tabs>
+
+      <groups>
+        <group id="MCPBridge_Group" caption="Bridge" appearsOnAddInTab="false" keytip="BR">
+          <button refID="MCPBridge_StartButton" size="large" />
+          <button refID="MCPBridge_StopButton" size="large" />
+          <button refID="MCPBridge_StatusButton" size="large" />
+        </group>
+      </groups>
+
+      <controls>
+        <button id="MCPBridge_StartButton"
+                caption="Start Bridge"
+                className="StartBridgeButton"
+                loadOnClick="true"
+                keytip="ST"
+                smallImage="pack://application:,,,/ArcGIS.Desktop.Resources;component/Images/GenericButtonGreen16.png"
+                largeImage="pack://application:,,,/ArcGIS.Desktop.Resources;component/Images/GenericButtonGreen32.png">
+          <tooltip heading="Start MCP Bridge">
+            Start the ArcGIS Pro MCP bridge so Claude (or any MCP client) can drive this session.<disabledText />
+          </tooltip>
+        </button>
+
+        <button id="MCPBridge_StopButton"
+                caption="Stop Bridge"
+                className="StopBridgeButton"
+                loadOnClick="true"
+                keytip="SP"
+                smallImage="pack://application:,,,/ArcGIS.Desktop.Resources;component/Images/GenericButtonRed16.png"
+                largeImage="pack://application:,,,/ArcGIS.Desktop.Resources;component/Images/GenericButtonRed32.png">
+          <tooltip heading="Stop MCP Bridge">
+            Stop the running MCP bridge.<disabledText />
+          </tooltip>
+        </button>
+
+        <button id="MCPBridge_StatusButton"
+                caption="Status"
+                className="StatusBridgeButton"
+                loadOnClick="true"
+                keytip="SS"
+                smallImage="pack://application:,,,/ArcGIS.Desktop.Resources;component/Images/GenericButtonBlue16.png"
+                largeImage="pack://application:,,,/ArcGIS.Desktop.Resources;component/Images/GenericButtonBlue32.png">
+          <tooltip heading="MCP Bridge Status">
+            Report whether the MCP bridge is running.<disabledText />
+          </tooltip>
+        </button>
+      </controls>
+    </insertModule>
+  </modules>
+</ArcGIS>

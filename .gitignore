@@ -1,25 +1,4 @@
-# Python
 __pycache__/
-*.py[cod]
-*.pyo
+*.pyc
 .venv/
-*.egg-info/
-
-# uv
-.python-version
-
-# MCP IPC temp files
-.arcgis_mcp/
-
-# ArcGIS
-*.aprx
-*.gdb/
-*.aprx.lock
-
-# Claude Code
-.claude/
-
-# OS
-.DS_Store
-Thumbs.db
-desktop.ini
+venv/

@@ -1,0 +1,30 @@
+{
+  "config": "{\"version\":\"5.43\",\"themeCollection\":{\"baseTheme\":{\"name\":\"CY24SU10\"}},\"activeSectionIndex\":0,\"defaultDrillFilterOtherVisuals\":true,\"settings\":{\"useStylableVisualContainerHeader\":true}}",
+  "layoutOptimization": 0,
+  "sections": [
+    {
+      "name": "ReportSection",
+      "displayName": "Resumen",
+      "filters": "[]",
+      "ordinal": 0,
+      "visualContainers": [],
+      "config": "{\"visibility\":0}",
+      "displayOption": 1,
+      "width": 1280,
+      "height": 720
+    }
+  ],
+  "filters": "[]",
+  "resourcePackages": [
+    {
+      "resourcePackage": {
+        "name": "SharedResources",
+        "type": 2,
+        "items": [
+          { "type": 202, "name": "CY24SU10", "path": "BaseThemes/CY24SU10.json" }
+        ],
+        "disabled": false
+      }
+    }
+  ]
+}

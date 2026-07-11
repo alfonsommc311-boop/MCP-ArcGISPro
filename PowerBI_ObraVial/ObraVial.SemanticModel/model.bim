@@ -1,0 +1,154 @@
+{
+  "name": "ObraVial",
+  "compatibilityLevel": 1567,
+  "model": {
+    "culture": "es-ES",
+    "defaultPowerBIDataSourceVersion": "powerBI_V3",
+    "sourceQueryCulture": "es-ES",
+    "tables": [
+      {
+        "name": "Tareas",
+        "columns": [
+          { "name": "ID", "dataType": "int64", "sourceColumn": "ID", "summarizeBy": "none" },
+          { "name": "WBS", "dataType": "string", "sourceColumn": "WBS", "summarizeBy": "none" },
+          { "name": "Fase", "dataType": "string", "sourceColumn": "Fase", "summarizeBy": "none" },
+          { "name": "Tarea", "dataType": "string", "sourceColumn": "Tarea", "summarizeBy": "none" },
+          { "name": "Nivel", "dataType": "int64", "sourceColumn": "Nivel", "summarizeBy": "none" },
+          { "name": "EsHito", "dataType": "string", "sourceColumn": "EsHito", "summarizeBy": "none" },
+          { "name": "EsCritica", "dataType": "string", "sourceColumn": "EsCritica", "summarizeBy": "none" },
+          { "name": "Inicio", "dataType": "dateTime", "sourceColumn": "Inicio", "summarizeBy": "none", "formatString": "yyyy-mm-dd" },
+          { "name": "Fin", "dataType": "dateTime", "sourceColumn": "Fin", "summarizeBy": "none", "formatString": "yyyy-mm-dd" },
+          { "name": "Duracion_dias", "dataType": "int64", "sourceColumn": "Duracion_dias", "summarizeBy": "sum" },
+          { "name": "Avance_pct", "dataType": "int64", "sourceColumn": "Avance_pct", "summarizeBy": "none" },
+          { "name": "HolguraTotal_dias", "dataType": "int64", "sourceColumn": "HolguraTotal_dias", "summarizeBy": "none" },
+          { "name": "Costo", "dataType": "double", "sourceColumn": "Costo", "summarizeBy": "sum", "formatString": "\\$#,0" },
+          { "name": "Recursos", "dataType": "string", "sourceColumn": "Recursos", "summarizeBy": "none" },
+          { "name": "Predecesoras", "dataType": "string", "sourceColumn": "Predecesoras", "summarizeBy": "none" }
+        ],
+        "partitions": [
+          {
+            "name": "Tareas",
+            "mode": "import",
+            "source": {
+              "type": "m",
+              "expression": [
+                "let",
+                "    Origen = Csv.Document(File.Contents(\"D:\\mcp para arguis pro\\PowerBI_ObraVial\\Tareas.csv\"), [Delimiter=\",\", Encoding=65001, QuoteStyle=QuoteStyle.Csv]),",
+                "    Encabezados = Table.PromoteHeaders(Origen, [PromoteAllScalars=true]),",
+                "    Tipos = Table.TransformColumnTypes(Encabezados, {{\"ID\", Int64.Type}, {\"Nivel\", Int64.Type}, {\"Inicio\", type date}, {\"Fin\", type date}, {\"Duracion_dias\", Int64.Type}, {\"Avance_pct\", Int64.Type}, {\"HolguraTotal_dias\", Int64.Type}, {\"Costo\", type number}})",
+                "in",
+                "    Tipos"
+              ]
+            }
+          }
+        ],
+        "measures": [
+          { "name": "Costo Total", "expression": "SUM ( Tareas[Costo] )", "formatString": "\\$#,0" },
+          { "name": "N Actividades", "expression": "CALCULATE ( COUNTROWS ( Tareas ), Tareas[EsHito] = \"No\" )" },
+          { "name": "N Criticas", "expression": "CALCULATE ( COUNTROWS ( Tareas ), Tareas[EsCritica] = \"Sí\" )" },
+          { "name": "Avance Global %", "expression": "DIVIDE ( SUMX ( Tareas, Tareas[Duracion_dias] * Tareas[Avance_pct] ), SUMX ( Tareas, Tareas[Duracion_dias] ) * 100 )", "formatString": "0.0%" },
+          { "name": "Inicio Proyecto", "expression": "MIN ( Tareas[Inicio] )", "formatString": "yyyy-mm-dd" },
+          { "name": "Fin Proyecto", "expression": "MAX ( Tareas[Fin] )", "formatString": "yyyy-mm-dd" },
+          { "name": "% Costo Critico", "expression": "DIVIDE ( CALCULATE ( [Costo Total], Tareas[EsCritica] = \"Sí\" ), [Costo Total] )", "formatString": "0.0%" }
+        ]
+      },
+      {
+        "name": "Recursos",
+        "columns": [
+          { "name": "Recurso", "dataType": "string", "sourceColumn": "Recurso", "summarizeBy": "none" },
+          { "name": "Tipo", "dataType": "string", "sourceColumn": "Tipo", "summarizeBy": "none" },
+          { "name": "Tarifa", "dataType": "double", "sourceColumn": "Tarifa", "summarizeBy": "none", "formatString": "\\$#,0" },
+          { "name": "UnidadTarifa", "dataType": "string", "sourceColumn": "UnidadTarifa", "summarizeBy": "none" },
+          { "name": "CostoTotal", "dataType": "double", "sourceColumn": "CostoTotal", "summarizeBy": "sum", "formatString": "\\$#,0" },
+          { "name": "NumTareas", "dataType": "int64", "sourceColumn": "NumTareas", "summarizeBy": "sum" }
+        ],
+        "partitions": [
+          {
+            "name": "Recursos",
+            "mode": "import",
+            "source": {
+              "type": "m",
+              "expression": [
+                "let",
+                "    Origen = Csv.Document(File.Contents(\"D:\\mcp para arguis pro\\PowerBI_ObraVial\\Recursos.csv\"), [Delimiter=\",\", Encoding=65001, QuoteStyle=QuoteStyle.Csv]),",
+                "    Encabezados = Table.PromoteHeaders(Origen, [PromoteAllScalars=true]),",
+                "    Tipos = Table.TransformColumnTypes(Encabezados, {{\"Tarifa\", type number}, {\"CostoTotal\", type number}, {\"NumTareas\", Int64.Type}})",
+                "in",
+                "    Tipos"
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "name": "CurvaS",
+        "columns": [
+          { "name": "Mes", "dataType": "dateTime", "sourceColumn": "Mes", "summarizeBy": "none", "formatString": "mmm yyyy" },
+          { "name": "CostoMensual", "dataType": "double", "sourceColumn": "CostoMensual", "summarizeBy": "sum", "formatString": "\\$#,0" },
+          { "name": "CostoAcumulado", "dataType": "double", "sourceColumn": "CostoAcumulado", "summarizeBy": "sum", "formatString": "\\$#,0" },
+          { "name": "PctAcumulado", "dataType": "double", "sourceColumn": "PctAcumulado", "summarizeBy": "none", "formatString": "0.0" }
+        ],
+        "partitions": [
+          {
+            "name": "CurvaS",
+            "mode": "import",
+            "source": {
+              "type": "m",
+              "expression": [
+                "let",
+                "    Origen = Csv.Document(File.Contents(\"D:\\mcp para arguis pro\\PowerBI_ObraVial\\CurvaS.csv\"), [Delimiter=\",\", Encoding=65001, QuoteStyle=QuoteStyle.Csv]),",
+                "    Encabezados = Table.PromoteHeaders(Origen, [PromoteAllScalars=true]),",
+                "    Tipos = Table.TransformColumnTypes(Encabezados, {{\"Mes\", type date}, {\"CostoMensual\", type number}, {\"CostoAcumulado\", type number}, {\"PctAcumulado\", type number}})",
+                "in",
+                "    Tipos"
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "name": "Calendario",
+        "columns": [
+          { "name": "Date", "dataType": "dateTime", "sourceColumn": "Date", "summarizeBy": "none", "formatString": "yyyy-mm-dd" },
+          { "name": "Anio", "dataType": "int64", "sourceColumn": "Anio", "summarizeBy": "none" },
+          { "name": "MesOrden", "dataType": "int64", "sourceColumn": "MesOrden", "summarizeBy": "none" },
+          { "name": "Mes", "dataType": "string", "sourceColumn": "Mes", "summarizeBy": "none", "sortByColumn": "MesOrden" }
+        ],
+        "partitions": [
+          {
+            "name": "Calendario",
+            "mode": "import",
+            "source": {
+              "type": "m",
+              "expression": [
+                "let",
+                "    Inicio = #date(2026,7,1),",
+                "    Fin = #date(2027,12,31),",
+                "    Dias = List.Dates(Inicio, Duration.Days(Fin - Inicio) + 1, #duration(1,0,0,0)),",
+                "    Tabla = Table.FromList(Dias, Splitter.SplitByNothing(), {\"Date\"}),",
+                "    T1 = Table.TransformColumnTypes(Tabla, {{\"Date\", type date}}),",
+                "    T2 = Table.AddColumn(T1, \"Anio\", each Date.Year([Date]), Int64.Type),",
+                "    T3 = Table.AddColumn(T2, \"MesOrden\", each Date.Year([Date]) * 100 + Date.Month([Date]), Int64.Type),",
+                "    T4 = Table.AddColumn(T3, \"Mes\", each Date.ToText([Date], \"MMM yyyy\"), type text)",
+                "in",
+                "    T4"
+              ]
+            }
+          }
+        ]
+      }
+    ],
+    "relationships": [
+      {
+        "name": "Cal_Tareas_Inicio",
+        "fromTable": "Tareas",
+        "fromColumn": "Inicio",
+        "toTable": "Calendario",
+        "toColumn": "Date"
+      }
+    ],
+    "annotations": [
+      { "name": "PBI_QueryOrder", "value": "[\"Tareas\",\"Recursos\",\"CurvaS\",\"Calendario\"]" }
+    ]
+  }
+}

@@ -112,8 +112,17 @@ def _call(op: str, args: dict = None) -> dict:
     return _call_via_files(op, args)
 
 
+_warned_file_fallback = False
+
+
 def _call_via_files(op: str, args: dict = None) -> dict:
     """Send a command to ArcGIS Pro and wait for the result (file IPC fallback)."""
+    global _warned_file_fallback
+    if not _warned_file_fallback:
+        # stderr only — stdout is reserved for the MCP stdio protocol
+        print("[arcgis-mcp] Socket transport unavailable; using file IPC fallback.",
+              file=sys.stderr)
+        _warned_file_fallback = True
     if args is None:
         args = {}
 
@@ -124,9 +133,16 @@ def _call_via_files(op: str, args: dict = None) -> dict:
         except FileNotFoundError:
             pass
 
-    # Write command
-    with open(CMD_FILE, "w", encoding="utf-8") as f:
-        json.dump({"op": op, "args": args}, f)
+    # Write command atomically (tmp + replace) so the bridge's poll loop can
+    # never read a partially written command.json.
+    tmp = CMD_FILE + ".tmp"
+    try:
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump({"op": op, "args": args}, f)
+        os.replace(tmp, CMD_FILE)
+    except OSError as e:
+        return {"ok": False, "data": None,
+                "error": f"Could not write command file in {IPC_DIR}: {e}"}
 
     # Wait for result
     deadline = time.time() + TIMEOUT
@@ -147,13 +163,24 @@ def _call_via_files(op: str, args: dict = None) -> dict:
         os.remove(CMD_FILE)
     except FileNotFoundError:
         pass
-    return {"ok": False, "error": "Timeout: ArcGIS Pro bridge did not respond. Is pro_bridge.py running in the Python window?", "data": None}
+    return {"ok": False, "data": None, "error": (
+        f"Timeout after {TIMEOUT}s: the ArcGIS Pro bridge did not respond. "
+        "Checklist: (1) Is ArcGIS Pro open with a project loaded? "
+        "(2) Is the bridge running? Start it with the 'MCP Bridge' toolbox (Start MCP Bridge) "
+        "or by exec'ing pro_bridge.py in the Python window. "
+        "(3) For long geoprocessing, raise 'timeout_seconds' in "
+        f"{os.path.join(IPC_DIR, 'config.json')} and restart Claude Desktop."
+    )}
 
 
-def _result_text(result: dict) -> str:
-    if result["ok"]:
-        return json.dumps(result["data"], indent=2, default=str)
-    return f"Error: {result['error']}"
+def _result_text(result) -> str:
+    # Defensive: a malformed/partial result (corrupt result.json, unexpected
+    # transport payload) must surface as a readable error, not a KeyError crash.
+    if not isinstance(result, dict):
+        return f"Error: unexpected bridge response: {result!r}"
+    if result.get("ok"):
+        return json.dumps(result.get("data"), indent=2, default=str)
+    return f"Error: {result.get('error') or 'unknown bridge error (no detail returned)'}"
 
 
 # ── MCP Tools ─────────────────────────────────────────────────────────────────
@@ -280,6 +307,14 @@ def run_geoprocessing(tool: str, params: list) -> str:
         params: List of positional parameters for the tool, e.g. ["roads", "output_buf", "100 Meters"]
 
     Example: run_geoprocessing("analysis.Buffer", ["C:/data/roads.shp", "C:/data/roads_buf.shp", "500 Meters"])
+
+    Notes:
+      - The FIRST parameter may be a layer name from the Contents pane (it is resolved
+        to its data source path). Any other dataset inputs must be FULL paths.
+      - Long-running tools may exceed the bridge timeout; the tool may still finish
+        inside ArcGIS Pro — verify with describe_data before re-running.
+      - In safe mode (hardening config) some destructive tools (e.g. management.Delete)
+        are blocked by policy and return a 'Policy: ...' error.
     """
     return _result_text(_call("run_geoprocessing", {"tool": tool, "params": params}))
 
@@ -454,11 +489,15 @@ def create_layout(name: str = "Layout", map_name: str = "", width: float = 11,
 def execute_python(code: str) -> str:
     """
     Execute arbitrary Python/arcpy code inside the ArcGIS Pro bridge.
-    Use this for complex arcpy.mp operations not covered by other tools.
+    Use this as a LAST RESORT for arcpy/arcpy.mp operations not covered by other tools.
 
     Available variables: arcpy, os, proj (the ArcGISProject), get_map()
-    Set  result = <value>  in your code to return data.
+    Set  result = <value>  in your code to return data (must be JSON-serializable).
     print() output is captured and returned as 'stdout'.
+
+    Note: if the bridge runs with safe_mode enabled (default in the hardening config),
+    this tool is disabled and returns a 'Policy: execute_python is disabled' error.
+    The user can enable it with allow_execute_python=true in ~/.arcgis_mcp/config.json.
 
     Example:
         code = \"\"\"
@@ -524,6 +563,13 @@ def run_recipe(name: str, params: dict = None) -> str:
                                          "fields": [...optional...], "limit": 100}
       - batch_export_layouts:   export ALL layouts to PDF/PNG/JPG/TIF.
                                 params: {"out_dir": "C:/out", "fmt": "PDF", "dpi": 150}
+      - field_stats:            min/max/mean/sum/count/nulls for a numeric field.
+                                params: {"layer_name": "...", "field": "..."}
+      - value_counts:           frequency of each distinct value in a field.
+                                params: {"layer_name": "...", "field": "...", "top": 20}
+
+    Note: recipes require the bridge to be started with the hardening layer loaded
+    (MCP Bridge toolbox Start button). Otherwise this returns "Unknown command: 'recipe'".
 
     Args:
         name: recipe name

@@ -82,6 +82,8 @@ try:
 except Exception as _e:  # noqa: BLE001 - graceful fallback by design
     print("[MCP Bridge] Hardening not loaded (%r); using built-in defaults." % _e)
 
+    LOG = None  # audit() below is a no-op, but LOG must exist (was a silent NameError per command)
+
     class _CFG:
         protocol_version = 1
         # Fallback (no hardening) preserves the ORIGINAL base-bridge behavior of
@@ -165,6 +167,12 @@ def handle_ping(_args):
         "maps":         map_list,
         "activeMap":    active_map.name if active_map else None,
         "activeView":   view_info,
+        # Additive diagnostics: lets the client explain 'Policy:' rejections
+        # (execute_python disabled / GP tool blocked) instead of blind retries.
+        "hardening":    _HARDENING,
+        "safeMode":     getattr(CFG, "safe_mode", None),
+        "executePythonEnabled": (not getattr(CFG, "safe_mode", False))
+                                or bool(getattr(CFG, "allow_execute_python", False)),
     })
 
 
@@ -185,7 +193,14 @@ def handle_get_active_map_name(_args):
 
 def handle_list_layers(args):
     map_name = args.get("map_name")
-    m = _proj.listMaps(map_name)[0] if map_name else _proj.activeMap
+    if map_name:
+        maps = _proj.listMaps(map_name)
+        if not maps:
+            raise RuntimeError("Map '%s' not found. Available: %s"
+                               % (map_name, [mm.name for mm in _proj.listMaps()]))
+        m = maps[0]
+    else:
+        m = _proj.activeMap
     if m is None:
         raise RuntimeError("No map found.")
     layers = [{"name": lyr.name, "visible": lyr.visible,
@@ -307,12 +322,19 @@ def handle_run_geoprocessing(args):
             _gp_map = None
         params = [resolve_param(arcpy, _gp_map, params[0])] + list(params[1:])
     parts = tool_path.split(".")
-    if len(parts) == 2:
-        fn = getattr(getattr(arcpy, parts[0]), parts[1])
-    elif len(parts) == 1:
-        fn = getattr(arcpy, parts[0])
-    else:
-        raise ValueError(f"Invalid tool path: {tool_path}")
+    try:
+        if len(parts) == 2:
+            fn = getattr(getattr(arcpy, parts[0]), parts[1])
+        elif len(parts) == 1:
+            fn = getattr(arcpy, parts[0])
+        else:
+            raise ValueError(f"Invalid tool path: {tool_path}")
+    except AttributeError:
+        raise ValueError(
+            f"Geoprocessing tool not found: '{tool_path}'. Check the spelling and use "
+            f"the dotted form '<toolbox>.<Tool>' (e.g. 'analysis.Buffer', "
+            f"'management.Project') or the legacy '<Tool>_<toolbox>' form."
+        )
     result = fn(*params)
     outputs = [result.getOutput(i) for i in range(result.outputCount)]
     return _ok({"tool": tool_path, "outputs": outputs})
@@ -509,13 +531,29 @@ def handle_create_layout(args):
     units    = args.get("units", "INCH")
     margin   = float(args.get("margin", 0.5))
 
+    # Resolve the map BEFORE creating the layout, so a bad map_name doesn't
+    # leave an orphan empty layout in the project.
+    if map_name:
+        maps = _proj.listMaps(map_name)
+        if not maps:
+            raise RuntimeError("Map '%s' not found. Available: %s"
+                               % (map_name, [mm.name for mm in _proj.listMaps()]))
+        m = maps[0]
+    else:
+        m = _get_map()
+
     layout = _proj.createLayout(width, height, units, name)
-    m = _proj.listMaps(map_name)[0] if map_name else _get_map()
 
     # Page-coordinate extent for the map frame (inset by margin on all sides)
     ext = arcpy.Extent(margin, margin, width - margin, height - margin)
     mf  = layout.createMapFrame(ext, m)
-    mf.camera.setExtent(mf.getLayerExtent(m.listLayers()[0]) if m.listLayers() else mf.camera.getExtent())
+    try:
+        if m.listLayers():
+            mf.camera.setExtent(mf.getLayerExtent(m.listLayers()[0]))
+    except Exception as e:  # noqa: BLE001 - initial zoom is best-effort
+        # Don't fail layout creation just because the initial extent couldn't be
+        # computed (e.g. first layer is a basemap/group layer with no extent).
+        print("[MCP Bridge] create_layout: could not set initial extent (%s)." % e)
 
     return _ok({
         "layout":   layout.name,
@@ -699,8 +737,17 @@ def _poll_loop():
 
             open(LOCK_FILE, "w").close()
             try:
-                with open(CMD_FILE, "r", encoding="utf-8") as f:
-                    cmd = json.load(f)
+                try:
+                    with open(CMD_FILE, "r", encoding="utf-8") as f:
+                        cmd = json.load(f)
+                except (json.JSONDecodeError, ValueError) as e:
+                    # Corrupt/garbage command file: discard it and answer with a
+                    # readable error instead of retrying it forever.
+                    os.remove(CMD_FILE)
+                    with open(RESULT_FILE, "w", encoding="utf-8") as f:
+                        json.dump(_err("Malformed command file (invalid JSON): %s" % e),
+                                  f, default=str)
+                    continue
                 os.remove(CMD_FILE)
 
                 op      = cmd.get("op", "")

@@ -1,0 +1,61 @@
+<!--
+  Reference project file for the MCP Bridge ArcGIS Pro add-in.
+
+  RECOMMENDED: generate the project from the ArcGIS Pro SDK Visual Studio template
+  ("ArcGIS Pro Module Add-in") so the Esri build targets that package the .esriAddinX
+  are wired automatically, then drop in Config.daml, Module1.cs, BridgeRunner.cs and
+  Buttons.cs from this folder. This csproj is a minimal stand-in if you build by hand.
+
+  ArcGIS Pro 3.3+ targets .NET 8 (3.0-3.2 = .NET 6). Pro 3.4 => net8.0-windows.
+-->
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <RootNamespace>MCPBridge</RootNamespace>
+    <AssemblyName>MCPBridge</AssemblyName>
+    <Platforms>x64</Platforms>
+    <PlatformTarget>x64</PlatformTarget>
+    <Nullable>disable</Nullable>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <!-- Adjust if ArcGIS Pro is installed elsewhere -->
+    <ProBin>C:\Program Files\ArcGIS\Pro\bin\</ProBin>
+  </PropertyGroup>
+
+  <!-- Pro assemblies: reference, do NOT copy locally (Private=false) -->
+  <ItemGroup>
+    <Reference Include="ArcGIS.Core">
+      <HintPath>$(ProBin)ArcGIS.Core.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="ArcGIS.Desktop.Framework">
+      <HintPath>$(ProBin)ArcGIS.Desktop.Framework.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="ArcGIS.Desktop.Core">
+      <HintPath>$(ProBin)Extensions\Core\ArcGIS.Desktop.Core.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="ArcGIS.Desktop.Mapping">
+      <HintPath>$(ProBin)Extensions\Mapping\ArcGIS.Desktop.Mapping.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+
+  <!-- Content packaged with the add-in and copied next to the DLL at runtime.
+       BridgeRunner.cs locates MCP_Bridge.pyt via Assembly.Location. Copy the two
+       Python files into this folder before building (or add them as links). -->
+  <ItemGroup>
+    <Content Include="Config.daml">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </Content>
+    <Content Include="MCP_Bridge.pyt">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </Content>
+    <Content Include="pro_bridge.py">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
+
+</Project>
