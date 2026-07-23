@@ -105,6 +105,36 @@ def main():
         finally:
             tsrv.stop()
 
+        # roadmap #1: the worker-wait is CONFIGURABLE, not a hardcoded 600 s literal
+        check("default response_timeout is 600",
+              bt.TransportServer(dispatch).response_timeout == 600)
+        check("custom response_timeout honored",
+              bt.TransportServer(dispatch, response_timeout=42).response_timeout == 42)
+        check("non-positive response_timeout falls back to default",
+              bt.TransportServer(dispatch, response_timeout=0).response_timeout == 600)
+
+        # An op slower than the configured wait -> the connection thread stops
+        # blocking and replies (ok False) instead of hanging on a fixed 600 s. The
+        # op keeps running on the worker; the client is just told there's no
+        # response yet (this is what a >timeout geoprocessing run now does cleanly).
+        slowsrv = bt.TransportServer(dispatch, response_timeout=0.05)
+        sport = slowsrv.start()
+        try:
+            r = bt.send_request(sport, "slow", {"n": 7}, timeout=5)
+            check("op slower than response_timeout -> ok False", r.get("ok") is False)
+            check("slow op reply is the 'no response' fallback",
+                  "no response" in (r.get("error") or ""))
+        finally:
+            slowsrv.stop()
+
+        # roadmap #4: hardening port.json permissions must never break the write
+        import tempfile as _tf
+        pd = _tf.mkdtemp()
+        pp = bt.write_port_file(pd, port, "tok-perms")
+        check("port file still written after permission hardening", os.path.exists(pp))
+        _h, _p, _t = bt.read_port_file(pd)
+        check("hardened port file still round-trips", _p == port and _t == "tok-perms")
+
         # latency sanity: a request returns well under the old 0.1s poll floor
         t0 = time.time()
         bt.send_request(port, "ping", timeout=5)

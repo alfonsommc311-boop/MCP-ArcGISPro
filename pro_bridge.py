@@ -381,33 +381,59 @@ def handle_list_fields(args):
     return _ok({"dataset": dataset, "fields": fields, "count": len(fields)})
 
 
+# These three listings are read-only queries. When a caller passes an explicit
+# `workspace`, we temporarily point arcpy.env.workspace at it JUST to run the list,
+# then restore the previous value in a finally block — a query must not mutate the
+# project's global workspace as a side effect. To set the workspace intentionally,
+# callers use set_workspace(). The returned "workspace" is the one actually listed
+# (the passed workspace, or the current one when none was given), which is what the
+# caller expects to see the results for.
+
 def handle_list_feature_classes(args):
     workspace = args.get("workspace")
     pattern   = args.get("pattern", "*")
     feat_type = args.get("feature_type", "")  # Point, Line, Polygon, etc.
-    if workspace:
-        arcpy.env.workspace = workspace
-    fcs = arcpy.ListFeatureClasses(pattern, feat_type) or []
-    return _ok({"workspace": arcpy.env.workspace, "feature_classes": sorted(fcs)})
+    _prev = arcpy.env.workspace
+    try:
+        if workspace:
+            arcpy.env.workspace = workspace
+        listed_ws = arcpy.env.workspace
+        fcs = arcpy.ListFeatureClasses(pattern, feat_type) or []
+    finally:
+        if workspace:
+            arcpy.env.workspace = _prev
+    return _ok({"workspace": listed_ws, "feature_classes": sorted(fcs)})
 
 
 def handle_list_rasters(args):
     workspace = args.get("workspace")
     pattern   = args.get("pattern", "*")
     raster_type = args.get("raster_type", "")
-    if workspace:
-        arcpy.env.workspace = workspace
-    rasters = arcpy.ListRasters(pattern, raster_type) or []
-    return _ok({"workspace": arcpy.env.workspace, "rasters": sorted(rasters)})
+    _prev = arcpy.env.workspace
+    try:
+        if workspace:
+            arcpy.env.workspace = workspace
+        listed_ws = arcpy.env.workspace
+        rasters = arcpy.ListRasters(pattern, raster_type) or []
+    finally:
+        if workspace:
+            arcpy.env.workspace = _prev
+    return _ok({"workspace": listed_ws, "rasters": sorted(rasters)})
 
 
 def handle_list_tables(args):
     workspace = args.get("workspace")
     pattern   = args.get("pattern", "*")
-    if workspace:
-        arcpy.env.workspace = workspace
-    tables = arcpy.ListTables(pattern) or []
-    return _ok({"workspace": arcpy.env.workspace, "tables": sorted(tables)})
+    _prev = arcpy.env.workspace
+    try:
+        if workspace:
+            arcpy.env.workspace = workspace
+        listed_ws = arcpy.env.workspace
+        tables = arcpy.ListTables(pattern) or []
+    finally:
+        if workspace:
+            arcpy.env.workspace = _prev
+    return _ok({"workspace": listed_ws, "tables": sorted(tables)})
 
 
 def handle_set_workspace(args):
@@ -493,11 +519,25 @@ def handle_describe_data(args):
     }
     if hasattr(desc, "spatialReference"):
         sr = desc.spatialReference
+        # Distinguish an UNDEFINED/unknown CRS from a real geographic one. The old
+        # code collapsed everything non-"Projected" to "Geographic", so a dataset
+        # with no coordinate system was reported as Geographic and made the agent
+        # reproject a file that has no source CRS to reproject FROM. arcpy reports an
+        # undefined SR as type "Unknown" with name "Unknown"/factoryCode 0.
+        sr_type = getattr(sr, "type", None) if sr is not None else None
+        sr_name = getattr(sr, "name", None) if sr is not None else None
+        sr_wkid = getattr(sr, "factoryCode", 0) if sr is not None else 0
+        if sr is None or sr_name in (None, "", "Unknown") or not sr_wkid:
+            reported_type = "Unknown"
+        elif sr_type in ("Projected", "Geographic"):
+            reported_type = sr_type
+        else:
+            reported_type = "Unknown"
         result["spatialReference"] = {
-            "name": sr.name,
-            "wkid": sr.factoryCode,
-            "type": "Projected" if sr.type == "Projected" else "Geographic",
-            "linearUnitName": sr.linearUnitName if sr.type == "Projected" else None,
+            "name": sr_name,
+            "wkid": sr_wkid,
+            "type": reported_type,
+            "linearUnitName": (sr.linearUnitName if reported_type == "Projected" else None),
         }
     if hasattr(desc, "shapeType"):
         result["shapeType"] = desc.shapeType
@@ -725,14 +765,25 @@ def _poll_loop():
         except FileNotFoundError:
             pass
 
+    # Adaptive backoff: poll fast (5 ms) right after activity so a quick command is
+    # picked up almost instantly, then grow the idle sleep toward the configured
+    # poll_interval cap while nothing is happening. Replaces the fixed 0.1 s wait,
+    # which added up to 100 ms of latency to every file-IPC command.
+    _MIN_POLL = 0.005
+    _MAX_POLL = float(getattr(CFG, "poll_interval", 0.1)) or 0.1
+    _idle = _MIN_POLL
+
     while _bridge_active:
         try:
             if not os.path.exists(CMD_FILE):
-                time.sleep(0.1)
+                time.sleep(_idle)
+                _idle = min(_idle * 2, _MAX_POLL)
                 continue
 
+            _idle = _MIN_POLL  # command present -> stay responsive for the next one
+
             if os.path.exists(LOCK_FILE):
-                time.sleep(0.05)
+                time.sleep(_MIN_POLL)
                 continue
 
             open(LOCK_FILE, "w").close()
@@ -828,7 +879,13 @@ try:
         return result
 
     _ttoken = os.urandom(8).hex()  # per-launch nonce so clients can verify the peer
-    _transport = TransportServer(_dispatch, token=_ttoken)
+    # Wait for the worker up to the SAME configured timeout the client uses (was a
+    # hardcoded 600 s inside the transport). A geoprocessing run longer than the old
+    # literal no longer makes the server reply "no response" while the worker is still
+    # busy. The client's request timeout (also CFG.timeout_seconds) trips first, so a
+    # too-slow op surfaces as a not-retried 'transport-inflight' rather than a phantom.
+    _resp_timeout = getattr(CFG, "timeout_seconds", None)
+    _transport = TransportServer(_dispatch, token=_ttoken, response_timeout=_resp_timeout)
     _tport = _transport.start()
     write_port_file(IPC_DIR, _tport, _ttoken)
     print("[MCP Bridge] Socket transport on 127.0.0.1:%d (file IPC still active)." % _tport)

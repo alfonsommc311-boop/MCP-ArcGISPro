@@ -60,8 +60,15 @@ Call ping() first on every session to confirm the connection and read project st
 - Use describe_data(path) to check the coordinate system before any distance-based operation
 
 ## Always check coordinate system before metric geoprocessing
-- If spatialReference.type is "Geographic" (degrees) → reproject first:
+- describe_data returns spatialReference.type as "Projected", "Geographic", or "Unknown".
+- If "Geographic" (degrees) → reproject first:
   run_geoprocessing("management.Project", [input, output, WKID])
+- If "Unknown" → the dataset has NO defined coordinate system. Do NOT reproject
+  (there is no source CRS to project FROM — Project would fail or mislead). Instead
+  tell the user the CRS is undefined; it must be defined with
+  run_geoprocessing("management.DefineProjection", [input, WKID]) once the true CRS
+  is known, or the data re-exported with a CRS.
+- If "Projected" → distance/area geoprocessing can proceed directly.
 - Common WKIDs: UTM Zone 49S = 32749, UTM Zone 50S = 32750, WGS 84 = 4326
 
 ## Standard workflow
@@ -144,7 +151,13 @@ def _call_via_files(op: str, args: dict = None) -> dict:
         return {"ok": False, "data": None,
                 "error": f"Could not write command file in {IPC_DIR}: {e}"}
 
-    # Wait for result
+    # Wait for result with adaptive backoff: start polling at 5 ms so a fast
+    # operation returns almost immediately, then grow the sleep toward a 0.1 s cap
+    # while waiting on a slow one. The old fixed 0.1 s sleep added up to 100 ms of
+    # latency to every command, even trivial ones.
+    _MIN_POLL = 0.005
+    _MAX_POLL = 0.1
+    poll = _MIN_POLL
     deadline = time.time() + TIMEOUT
     while time.time() < deadline:
         if os.path.exists(RESULT_FILE) and not os.path.exists(LOCK_FILE):
@@ -154,9 +167,10 @@ def _call_via_files(op: str, args: dict = None) -> dict:
                 os.remove(RESULT_FILE)
                 return result
             except (json.JSONDecodeError, OSError):
-                time.sleep(0.1)
+                time.sleep(_MIN_POLL)
                 continue
-        time.sleep(0.1)
+        time.sleep(poll)
+        poll = min(poll * 2, _MAX_POLL)
 
     # Timeout — clean up
     try:
@@ -445,6 +459,12 @@ def describe_data(path: str) -> str:
     """
     Describe a dataset — returns coordinate system, geometry type, extent, and data type.
     Use this to verify a file exists and check its projection before geoprocessing.
+
+    spatialReference.type is one of:
+      - "Projected"  → metric geoprocessing can run directly.
+      - "Geographic" → coordinates in degrees; reproject before distance/area work.
+      - "Unknown"    → NO coordinate system is defined. Do NOT reproject (nothing to
+                       project from); the CRS must be defined first (DefineProjection).
 
     Args:
         path: Full path to the dataset (shapefile, raster, feature class, GDB, etc.)
