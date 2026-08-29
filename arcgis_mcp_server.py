@@ -525,13 +525,15 @@ def publish_web_layer(layer: str, service_name: str, summary: str = "", tags: st
     "Auto-Assign IDs Sequentially", Analyzer error 00374) — you don't need to do
     anything about that yourself.
 
-    Known limitation (live-confirmed, not something you can fix by retrying or
-    rephrasing): this can fail with a generic ArcGIS ERROR 999999 even when the
-    exact same data publishes fine through ArcGIS Pro's own Share As Web Layer UI
-    seconds later. Most likely cause is this bridge's background-thread execution
-    model, not the data, the layer, or the portal. If this tool fails with
-    ERROR 999999, tell the user to try publishing through the Pro UI directly
-    instead of retrying this tool.
+    Known limitation (confirmed with a controlled test, not a guess — do not retry
+    this tool on a 999999 or try to work around it by changing parameters): this
+    fails with a generic ArcGIS ERROR 999999 every time, caused by this bridge's
+    background-thread architecture, not the data, layer, or portal. The identical
+    call succeeds when run directly in ArcGIS Pro's own Python window console
+    instead of through this bridge. If this tool fails with ERROR 999999, tell the
+    user to either publish through the Pro UI directly, or offer to write them a
+    short standalone script to paste into the Python window console (same arcpy
+    calls, no bridge involved) — both are known to work.
 
     Args:
         layer: Exact layer name as shown in the Contents pane

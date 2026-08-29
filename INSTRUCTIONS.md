@@ -119,7 +119,7 @@ Before calling it, confirm with the user:
 
 If `ping()` or the tool's error indicates no active portal, tell the user to sign in via ArcGIS Pro's Settings > Portals first — this bridge cannot sign in on their behalf.
 
-**Known limitation:** `publish_web_layer` can fail with a generic `ERROR 999999` for reasons unrelated to the data or the portal — most likely this bridge's background-thread execution model, which the same operation doesn't hit when run through ArcGIS Pro's own UI. Don't retry this tool repeatedly on a 999999 failure — tell the user to try Share As Web Layer in the Pro UI directly instead.
+**Known limitation (confirmed, not a guess):** `publish_web_layer` fails with a generic `ERROR 999999` every time, caused by this bridge's background-thread architecture — proven with a controlled test comparing the identical call from the bridge (fails instantly) vs. from the Pro Python window's console directly (succeeds, ~10s). Don't retry this tool repeatedly on a 999999 failure. Tell the user to either publish through the Pro UI directly, or offer to write them a short standalone script to paste into the Python window console (same arcpy calls, no bridge involved) — both work.
 
 ---
 
