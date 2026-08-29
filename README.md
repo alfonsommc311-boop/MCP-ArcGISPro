@@ -153,12 +153,16 @@ Claude Desktop
     ↓  stdio (MCP)
 arcgis_mcp_server.py   ← runs via uv, any Python
     ↓  file-based IPC  (~/.arcgis_mcp/)
-pro_bridge.py          ← runs in ArcGIS Pro's Python window
-    ↓  arcpy.mp API
-ArcGIS Pro (live session)
+pro_bridge.py          ← runs in ArcGIS Pro's Python window, on a background thread
+    ↓                                          ↓
+arcpy / arcpy.mp                        arcgis (ArcGIS API for Python)
+    ↓                                          ↓
+ArcGIS Pro (live session)               ArcGIS Online / Enterprise portal, over REST
 ```
 
 The bridge uses file-based IPC (command / result JSON files in `~/.arcgis_mcp/`) — no sockets, no named pipes, no compilation required.
+
+Almost everything goes through `arcpy`/`arcpy.mp` against the live local session. **`publish_web_layer` is the one exception**, and deliberately so: `arcpy.server`/`arcpy.mp.CreateWebLayerSDDraft` are COM-based and need the signed-in portal session in a way that's only available on ArcGIS Pro's true main thread — not the background thread this bridge dispatches every command from. Rather than block on that, `publish_web_layer` uses the `arcgis` package instead, which talks to the portal over plain REST (reusing the same Pro sign-in via `arcpy.GetSigninToken()`, no separate login) — REST has no thread affinity, so it works fine from here. Same pattern is available for other portal-side operations (content management, sharing, editing an already-published layer, user/group admin) if this bridge grows in that direction later — those aren't subject to the thread limitation either.
 
 ---
 
