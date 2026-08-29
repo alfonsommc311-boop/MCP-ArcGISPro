@@ -562,8 +562,9 @@ def handle_export_layout(args):
 
 def handle_publish_web_layer(args):
     """Publish a layer as a hosted feature service to the ArcGIS Pro project's
-    active portal (ArcGIS Online or Enterprise). Uses arcpy.mp.CreateWebLayerSDDraft
-    -> arcpy.server.StageService -> arcpy.server.UploadServiceDefinition.
+    active portal (ArcGIS Online or Enterprise). Uses the ArcGIS API for Python
+    (arcgis package) over REST, reusing the existing Pro sign-in token -- not
+    arcpy.server, which doesn't work reliably from this bridge's background thread.
     Requires the user to already be signed in to a portal in ArcGIS Pro."""
     layer        = args.get("layer")
     service_name = args.get("service_name")
@@ -588,84 +589,68 @@ def handle_publish_web_layer(args):
     layers = m.listLayers(layer)
     if not layers:
         raise RuntimeError(f"Layer '{layer}' not found.")
+    catalog_path = arcpy.Describe(layers[0]).catalogPath
 
-    # arcpy has no equivalent of the old arcpy.mapping.AnalyzeForSD / the Pro UI's
-    # "Analyze" step for feature layers — Esri has marked that gap "will not be
-    # addressed". But one specific, very common failure (Analyzer error 00374,
-    # "Unique numeric IDs are not assigned") we CAN both detect AND fix ahead of
-    # time: it's a Map Properties setting (useServiceLayerIDs), not a data format
-    # issue — live-confirmed NOT specific to shapefiles. Auto-assign IDs the same
-    # way the Pro UI's "Auto-Assign IDs Sequentially" does, preserving any IDs
-    # already set (e.g. for a stable overwrite of an existing service).
-    m_cim = m.getDefinition("V3")
-    if not m_cim.useServiceLayerIDs:
-        m_cim.useServiceLayerIDs = True
-        m.setDefinition(m_cim)
+    # Uses the ArcGIS API for Python (arcgis package) over plain REST, reusing the
+    # existing Pro sign-in token via arcpy.GetSigninToken() -- deliberately NOT
+    # arcpy.mp.CreateWebLayerSDDraft / arcpy.server.StageService. Those are COM-based
+    # and need the signed-in portal session in a way that's only available on ArcGIS
+    # Pro's true main thread, which this bridge's background polling thread is not --
+    # confirmed with a controlled test: the identical call fails instantly with a
+    # generic ERROR 999999 from here, every time, but succeeds (in real time, ~10-30s)
+    # when run directly in the Python window's own console instead. REST calls have
+    # no such thread affinity, and this path is live-verified working from here.
+    from arcgis.gis import GIS
+    from arcgis.features import GeoAccessor
 
-    items = list(m.listLayers()) + list(m.listTables())
-    cims = [(it, it.getDefinition("V3")) for it in items]
-    used_ids = {c.serviceLayerID for _, c in cims if c.serviceLayerID != -1}
-    next_id = 0
-    for it, cim in cims:
-        if cim.serviceLayerID == -1:
-            while next_id in used_ids:
-                next_id += 1
-            cim.serviceLayerID = next_id
-            used_ids.add(next_id)
-            it.setDefinition(cim)
-        next_id += 1
+    token_info = arcpy.GetSigninToken()
+    if not token_info:
+        raise RuntimeError("Could not get a sign-in token for the active portal.")
+    gis = GIS(portal, token=token_info["token"])
 
-    work_dir = os.path.join(IPC_DIR, "publish")
-    os.makedirs(work_dir, exist_ok=True)
-    sddraft = os.path.join(work_dir, f"{service_name}.sddraft")
-    sd      = os.path.join(work_dir, f"{service_name}.sd")
+    tag_list = [t.strip() for t in tags.split(",") if t.strip()] if tags else []
+
+    existing = [i for i in gis.content.search(
+        query=f'title:"{service_name}" AND owner:{gis.users.me.username}',
+        item_type="Feature Layer", max_items=10,
+    ) if i.title == service_name]
+
+    if existing and not overwrite:
+        raise RuntimeError(
+            f"A feature layer named '{service_name}' already exists "
+            f"(id={existing[0].id}). Pass overwrite=True to replace it, or choose a different name."
+        )
+
+    sdf = GeoAccessor.from_featureclass(catalog_path)
 
     try:
-        arcpy.mp.CreateWebLayerSDDraft(
-            layers[0], sddraft, service_name,
-            server_type="MY_HOSTED_SERVICES",
-            service_type="FEATURE_ACCESS",
-            overwrite_existing_service=overwrite,
-            summary=summary,
-            tags=tags,
-        )
-        arcpy.server.StageService(sddraft, sd)
-        arcpy.server.UploadServiceDefinition(
-            sd, "My Hosted Services",
-            in_override="OVERRIDE_DEFINITION" if overwrite else "USE_DEFINITION",
-            in_public="PUBLIC" if public else "PRIVATE",
-        )
+        if existing:
+            # True overwrite (same item/URL kept) rather than delete + republish --
+            # documented via the installed arcgis package's own to_featurelayer()
+            # docstring, not live-tested for this exact branch yet.
+            lyr_item = sdf.spatial.to_featurelayer(
+                title=service_name, gis=gis, tags=tag_list,
+                overwrite=True,
+                service={"featureServiceId": existing[0].id, "layer": 0},
+            )
+        else:
+            lyr_item = sdf.spatial.to_featurelayer(title=service_name, gis=gis, tags=tag_list)
     except Exception as e:
-        # arcpy.GetMessages() can carry warning-level detail (e.g. data-copy notices)
-        # that doesn't make it into the raised exception's own text.
-        #
-        # Live-confirmed 2026-08-29: StageService/CreateWebLayerSDDraft can fail with
-        # a generic ERROR 999999 from THIS bridge even when the exact same map/layer
-        # publishes fine through the Pro UI seconds later on the same portal, account,
-        # and machine -- with map-vs-layer object and layer-ID assignment ruled out as
-        # the difference. The one thing that does differ is which thread runs it: the
-        # UI runs on ArcGIS Pro's main thread; every bridge command (including this
-        # one) runs on the background polling thread. Best explanation: StageService
-        # needs the signed-in portal session, and that session context isn't usable
-        # from a background thread -- unlike e.g. GetActivePortalURL(), which just
-        # reads config and works fine from here. Not fixable without restructuring
-        # this bridge to marshal specific calls onto the main thread, which is a much
-        # bigger change than anything else here -- so surface it as a hint instead of
-        # silently retrying forever.
-        raise RuntimeError(
-            f"{e}\nGeoprocessing messages: {arcpy.GetMessages()}\n"
-            "If this is a generic ERROR 999999 and the layer/map publishes fine "
-            "through ArcGIS Pro's own Share As Web Layer UI, this bridge's "
-            "background-thread architecture is the likely cause, not your data or "
-            "portal — tell the user to publish through the Pro UI directly for now."
-        )
+        raise RuntimeError(f"Publish failed: {e}")
+
+    if summary:
+        lyr_item.update(item_properties={"snippet": summary})
+    if public:
+        lyr_item.share(everyone=True)
 
     return _ok({
         "layer": layer,
         "serviceName": service_name,
         "portal": portal,
         "public": public,
-        "sdFile": sd,
+        "itemId": lyr_item.id,
+        "url": lyr_item.homepage,
+        "overwritten": bool(existing),
     })
 
 

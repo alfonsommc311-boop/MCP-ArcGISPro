@@ -40,7 +40,9 @@ IPC_DIR = os.path.join(os.path.expanduser("~"), ".arcgis_mcp")
 CMD_FILE = os.path.join(IPC_DIR, "command.json")
 RESULT_FILE = os.path.join(IPC_DIR, "result.json")
 LOCK_FILE = os.path.join(IPC_DIR, "lock")
-TIMEOUT = 15  # seconds to wait for ArcGIS Pro to respond
+TIMEOUT = 120  # seconds to wait for ArcGIS Pro to respond — live-hit at 15s: a real
+                # publish_web_layer call took 32s and the old 15s timeout reported a
+                # false "Timeout" even though it was quietly succeeding server-side
 
 os.makedirs(IPC_DIR, exist_ok=True)
 
@@ -521,19 +523,10 @@ def publish_web_layer(layer: str, service_name: str, summary: str = "", tags: st
     whichever portal is currently active in ArcGIS Pro. Always confirm with the user
     before calling this — it creates or overwrites content on their portal account.
 
-    Layer/table service IDs are auto-assigned as needed (matching the Pro UI's
-    "Auto-Assign IDs Sequentially", Analyzer error 00374) — you don't need to do
-    anything about that yourself.
-
-    Known limitation (confirmed with a controlled test, not a guess — do not retry
-    this tool on a 999999 or try to work around it by changing parameters): this
-    fails with a generic ArcGIS ERROR 999999 every time, caused by this bridge's
-    background-thread architecture, not the data, layer, or portal. The identical
-    call succeeds when run directly in ArcGIS Pro's own Python window console
-    instead of through this bridge. If this tool fails with ERROR 999999, tell the
-    user to either publish through the Pro UI directly, or offer to write them a
-    short standalone script to paste into the Python window console (same arcpy
-    calls, no bridge involved) — both are known to work.
+    Publishes over REST via the ArcGIS API for Python (reusing your existing Pro
+    sign-in — no separate login needed), not the classic arcpy.server pipeline,
+    which doesn't work reliably from this bridge. Can take up to ~30-60s for
+    typical layers; this is normal, don't treat a slow response as a failure.
 
     Args:
         layer: Exact layer name as shown in the Contents pane

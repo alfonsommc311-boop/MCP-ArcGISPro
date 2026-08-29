@@ -27,6 +27,7 @@ Connects Claude Desktop (or any MCP client) to a live ArcGIS Pro session, enabli
 - ArcGIS Pro 3.x (tested on 3.6.1)
 - Claude Desktop
 - [uv](https://docs.astral.sh/uv/getting-started/installation/) — lightweight Python package manager
+- The `arcgis` package (ArcGIS API for Python) in ArcGIS Pro's Python environment, for `publish_web_layer` only — bundled by default in ArcGIS Pro's `arcgispro-py3` environment on recent versions; the rest of the bridge doesn't need it
 
 
 ---
@@ -165,7 +166,6 @@ The bridge uses file-based IPC (command / result JSON files in `~/.arcgis_mcp/`)
 
 - **Opening a map view automatically** is not possible via Python/ArcPy alone — it's an application-shell action that lives in the compiled ArcGIS Pro SDK, not the arcpy document API. The user must open the map view manually once per session by double-clicking it in the Catalog pane. All other operations work without an open view — for zooming/visualizing a layer specifically, `create_layout()` + `export_layout()` render headlessly and don't need an open view at all.
 - **Interactive sketch-tool digitizing** (drawing features by hand) requires the ArcGIS Pro UI and cannot be automated — by definition, freehand digitizing needs a human at the screen. Non-interactive attribute edits don't have this limitation: use `update_features`.
-- **`publish_web_layer` fails with a generic `ArcGIS ERROR 999999`, confirmed caused by this bridge's background-thread architecture.** `arcpy.server.StageService` needs the signed-in portal session, and that session context isn't usable from a background thread — proven with a controlled test: the identical `CreateWebLayerSDDraft`/`StageService` call, same layer, same fix applied, fails instantly from this bridge every time, but succeeds (in ~10s of real work) when run directly in ArcGIS Pro's own Python window console instead. If you hit this, either publish through the Pro UI directly, or run the same calls yourself in the Python window console — this isn't fixable without restructuring the bridge to marshal specific calls onto the main thread, which is a bigger change than anything else here.
 
 ---
 
