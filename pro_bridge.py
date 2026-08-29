@@ -170,7 +170,15 @@ def handle_zoom_to_layer(args):
                 "open the map in ArcGIS Pro (double-click in Catalog pane) to see it."
             ),
         })
-    view.camera.setExtent(layers[0].getExtent())
+    # Use the data-source extent (Describe) instead of MapView.getLayerExtent():
+    #   * Layer.getExtent() does not exist in ArcGIS Pro 3.x (raised AttributeError).
+    #   * MapView.getLayerExtent() depends on the view's render state and can return
+    #     a degenerate (zero-size) extent when the map view isn't the active/rendered
+    #     tab, and it defaults to the selection-only extent.
+    # Describe(...).extent is deterministic and always the FULL layer extent (matching
+    # this tool's documented behavior). camera.setExtent reprojects it to the map's
+    # spatial reference automatically.
+    view.camera.setExtent(arcpy.Describe(layers[0]).extent)
     return _ok({"zoomedTo": name})
 
 
