@@ -96,7 +96,32 @@ Use `execute_python` as a last resort, not a first choice.
 
 ---
 
-## 8. Be Transparent About What You Did
+## 8. Editing Data — Confirm Before Bulk Updates
+
+`update_features` sets the same field value(s) on every row matching `where_clause`, with no undo.
+
+Before calling it:
+- State the exact `where_clause` and the field/value changes in plain language
+- Get explicit confirmation from the user first
+- Be especially careful with `where_clause=""` — that updates every row in the layer
+- For per-row computed values (e.g. incrementing a field), use `execute_python` with an `UpdateCursor` instead — `update_features` only sets constant values
+
+---
+
+## 9. Publishing — Always Confirm First
+
+`publish_web_layer` creates or overwrites content on the user's ArcGIS Online / Enterprise portal (whichever is active in ArcGIS Pro). This is visible to others if shared publicly, and can overwrite an existing service if `overwrite=True`.
+
+Before calling it, confirm with the user:
+- The exact service name
+- Whether it should be public or private (default is private)
+- Whether it's OK to overwrite if a service with that name already exists
+
+If `ping()` or the tool's error indicates no active portal, tell the user to sign in via ArcGIS Pro's Settings > Portals first — this bridge cannot sign in on their behalf.
+
+---
+
+## 10. Be Transparent About What You Did
 
 After completing a workflow, summarize:
 - What layers were added
@@ -104,3 +129,4 @@ After completing a workflow, summarize:
 - The CRS used for analysis
 - Where output files were saved
 - Whether the map view is open or needs to be opened manually
+- Any data edited (`update_features`) or content published (`publish_web_layer`)

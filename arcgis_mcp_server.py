@@ -78,6 +78,17 @@ geoprocessing → add result to map → zoom_to_layer → create_layout → expo
 ## zoom_to_layer
 Only works when a map view is open. If the tool returns a warning instead of zooming,
 tell the user to open the map in ArcGIS Pro (double-click it in the Catalog pane).
+To show a layer's extent without needing an open view at all, use create_layout()
++ export_layout() instead — layouts render headlessly and don't need an active view.
+
+## update_features
+Bulk-sets the same value(s) on every row matching where_clause — there is no undo.
+Always state the where_clause and the exact field/value changes and get explicit
+confirmation before calling this, especially with where_clause="" (every row).
+
+## publish_web_layer
+Creates or overwrites content on the user's ArcGIS Online/Enterprise portal. Always
+confirm the service name and whether it should be public before calling this.
 
 ## When no specific tool covers the need
 Use execute_python(code) to run any arcpy/arcpy.mp code directly.
@@ -302,6 +313,27 @@ def select_by_attribute(layer: str, where_clause: str, selection_type: str = "NE
         "layer": layer,
         "where_clause": where_clause,
         "selection_type": selection_type,
+    }))
+
+
+@mcp.tool()
+def update_features(layer: str, where_clause: str, updates: dict) -> str:
+    """
+    Update attribute values on features matching a WHERE clause. Sets the same
+    field value(s) on every matching row (bulk update). For per-row computed
+    values (e.g. incrementing a counter), use execute_python with an UpdateCursor instead.
+
+    Args:
+        layer: Exact layer name as shown in the Contents pane
+        where_clause: SQL expression selecting which rows to update (e.g. "STATUS = 'Pending'").
+                      Pass "" to update every row in the layer — be deliberate about this.
+        updates: Dict of {field_name: new_value} applied to every matching row,
+                 e.g. {"STATUS": "Verified", "REVIEWED_BY": "GIS Team"}
+    """
+    return _result_text(_call("update_features", {
+        "layer": layer,
+        "where_clause": where_clause,
+        "updates": updates,
     }))
 
 
@@ -596,6 +628,32 @@ def run_recipe(name: str, params: dict = None) -> str:
         params: dict of recipe arguments
     """
     return _result_text(_call("recipe", {"name": name, "params": params or {}}))
+
+
+@mcp.tool()
+def publish_web_layer(layer: str, service_name: str, summary: str = "", tags: str = "",
+                      public: bool = False, overwrite: bool = False) -> str:
+    """
+    Publish a layer as a hosted feature service to ArcGIS Online / Enterprise, using
+    whichever portal is currently active in ArcGIS Pro. Always confirm with the user
+    before calling this — it creates or overwrites content on their portal account.
+
+    Args:
+        layer: Exact layer name as shown in the Contents pane
+        service_name: Name for the hosted feature service (must be unique in the target folder)
+        summary: Short description shown on the portal item (optional)
+        tags: Comma-separated tags for the portal item (optional)
+        public: Share publicly if True; private (owner-only) if False (default: False)
+        overwrite: Overwrite an existing service with the same name if True (default: False)
+    """
+    return _result_text(_call("publish_web_layer", {
+        "layer": layer,
+        "service_name": service_name,
+        "summary": summary,
+        "tags": tags,
+        "public": public,
+        "overwrite": overwrite,
+    }))
 
 
 # ── Run ───────────────────────────────────────────────────────────────────────
