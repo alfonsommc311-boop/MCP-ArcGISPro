@@ -25,6 +25,14 @@ import json
 import time
 import sys
 
+# On Windows, stdout/stdin default to the system ANSI code page when piped (not
+# attached to a real console) rather than UTF-8 — exactly the case for an MCP
+# stdio server. Without this, any non-ASCII character (em dashes, curly quotes,
+# etc.) in tool docstrings or returned text gets mangled on the client side.
+if sys.platform == "win32":
+    sys.stdout.reconfigure(encoding="utf-8")
+    sys.stdin.reconfigure(encoding="utf-8")
+
 from mcp.server.fastmcp import FastMCP
 
 # ── IPC setup ────────────────────────────────────────────────────────────────
