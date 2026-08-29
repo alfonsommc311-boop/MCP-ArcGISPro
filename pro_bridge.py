@@ -292,8 +292,11 @@ def handle_select_by_attribute(args):
     layers = m.listLayers(layer)
     if not layers:
         raise RuntimeError(f"Layer '{layer}' not found.")
-    result = arcpy.management.SelectLayerByAttribute(layers[0], selection_type, where_clause)
-    count = int(arcpy.management.GetCount(result).getOutput(0))
+    # Count on layers[0] directly, not the SelectLayerByAttribute Result object —
+    # the Result token doesn't resolve from this background thread (ERROR 000732),
+    # even though the selection itself applies fine to the real Layer object.
+    arcpy.management.SelectLayerByAttribute(layers[0], selection_type, where_clause)
+    count = int(arcpy.management.GetCount(layers[0]).getOutput(0))
     return _ok({"layer": layer, "selectedCount": count, "whereClause": where_clause})
 
 
@@ -391,10 +394,18 @@ def handle_list_fields(args):
     dataset = args.get("dataset")
     if not dataset:
         raise ValueError("'dataset' is required")
-    if not arcpy.Exists(dataset):
+
+    # Accept a Contents-pane layer name (not just a path) as the docstring promises —
+    # arcpy.ListFields() doesn't reliably resolve a bare layer name from this thread.
+    resolved = dataset
+    layers = _get_map().listLayers(dataset)
+    if layers:
+        resolved = arcpy.Describe(layers[0]).catalogPath
+
+    if not arcpy.Exists(resolved):
         raise RuntimeError(f"Dataset not found: {dataset}")
     fields = []
-    for f in arcpy.ListFields(dataset):
+    for f in arcpy.ListFields(resolved):
         fields.append({
             "name": f.name,
             "aliasName": f.aliasName,
@@ -717,8 +728,9 @@ def handle_export_layout(args):
 
 def handle_publish_web_layer(args):
     """Publish a layer as a hosted feature service to the ArcGIS Pro project's
-    active portal (ArcGIS Online or Enterprise). Uses arcpy.mp.CreateWebLayerSDDraft
-    -> arcpy.server.StageService -> arcpy.server.UploadServiceDefinition.
+    active portal (ArcGIS Online or Enterprise). Uses the ArcGIS API for Python
+    (arcgis package) over REST, reusing the existing Pro sign-in token -- not
+    arcpy.server, which doesn't work reliably from this bridge's background thread.
     Requires the user to already be signed in to a portal in ArcGIS Pro."""
     layer        = args.get("layer")
     service_name = args.get("service_name")
@@ -743,33 +755,68 @@ def handle_publish_web_layer(args):
     layers = m.listLayers(layer)
     if not layers:
         raise RuntimeError(f"Layer '{layer}' not found.")
+    catalog_path = arcpy.Describe(layers[0]).catalogPath
 
-    work_dir = os.path.join(IPC_DIR, "publish")
-    os.makedirs(work_dir, exist_ok=True)
-    sddraft = os.path.join(work_dir, f"{service_name}.sddraft")
-    sd      = os.path.join(work_dir, f"{service_name}.sd")
+    # Uses the ArcGIS API for Python (arcgis package) over plain REST, reusing the
+    # existing Pro sign-in token via arcpy.GetSigninToken() -- deliberately NOT
+    # arcpy.mp.CreateWebLayerSDDraft / arcpy.server.StageService. Those are COM-based
+    # and need the signed-in portal session in a way that's only available on ArcGIS
+    # Pro's true main thread, which this bridge's background polling thread is not --
+    # confirmed with a controlled test: the identical call fails instantly with a
+    # generic ERROR 999999 from here, every time, but succeeds (in real time, ~10-30s)
+    # when run directly in the Python window's own console instead. REST calls have
+    # no such thread affinity, and this path is live-verified working from here.
+    from arcgis.gis import GIS
+    from arcgis.features import GeoAccessor
 
-    arcpy.mp.CreateWebLayerSDDraft(
-        layers[0], sddraft, service_name,
-        server_type="MY_HOSTED_SERVICES",
-        service_type="FEATURE_ACCESS",
-        overwrite_existing_service=overwrite,
-        summary=summary,
-        tags=tags,
-    )
-    arcpy.server.StageService(sddraft, sd)
-    arcpy.server.UploadServiceDefinition(
-        sd, "My Hosted Services",
-        in_override="OVERRIDE_DEFINITION" if overwrite else "USE_DEFINITION",
-        in_public="PUBLIC" if public else "PRIVATE",
-    )
+    token_info = arcpy.GetSigninToken()
+    if not token_info:
+        raise RuntimeError("Could not get a sign-in token for the active portal.")
+    gis = GIS(portal, token=token_info["token"])
+
+    tag_list = [t.strip() for t in tags.split(",") if t.strip()] if tags else []
+
+    existing = [i for i in gis.content.search(
+        query=f'title:"{service_name}" AND owner:{gis.users.me.username}',
+        item_type="Feature Layer", max_items=10,
+    ) if i.title == service_name]
+
+    if existing and not overwrite:
+        raise RuntimeError(
+            f"A feature layer named '{service_name}' already exists "
+            f"(id={existing[0].id}). Pass overwrite=True to replace it, or choose a different name."
+        )
+
+    sdf = GeoAccessor.from_featureclass(catalog_path)
+
+    try:
+        if existing:
+            # True overwrite (same item/URL kept) rather than delete + republish --
+            # documented via the installed arcgis package's own to_featurelayer()
+            # docstring, not live-tested for this exact branch yet.
+            lyr_item = sdf.spatial.to_featurelayer(
+                title=service_name, gis=gis, tags=tag_list,
+                overwrite=True,
+                service={"featureServiceId": existing[0].id, "layer": 0},
+            )
+        else:
+            lyr_item = sdf.spatial.to_featurelayer(title=service_name, gis=gis, tags=tag_list)
+    except Exception as e:
+        raise RuntimeError(f"Publish failed: {e}")
+
+    if summary:
+        lyr_item.update(item_properties={"snippet": summary})
+    if public:
+        lyr_item.share(everyone=True)
 
     return _ok({
         "layer": layer,
         "serviceName": service_name,
         "portal": portal,
         "public": public,
-        "sdFile": sd,
+        "itemId": lyr_item.id,
+        "url": lyr_item.homepage,
+        "overwritten": bool(existing),
     })
 
 

@@ -119,6 +119,8 @@ Before calling it, confirm with the user:
 
 If `ping()` or the tool's error indicates no active portal, tell the user to sign in via ArcGIS Pro's Settings > Portals first — this bridge cannot sign in on their behalf.
 
+This publishes over REST (the ArcGIS API for Python) rather than the classic arcpy.server pipeline, and can take up to ~30-60 seconds — don't treat a slow response as a failure or retry mid-flight.
+
 ---
 
 ## 10. Be Transparent About What You Did

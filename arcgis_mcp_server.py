@@ -25,6 +25,14 @@ import json
 import time
 import sys
 
+# On Windows, stdout/stdin default to the system ANSI code page when piped (not
+# attached to a real console) rather than UTF-8 — exactly the case for an MCP
+# stdio server. Without this, any non-ASCII character (em dashes, curly quotes,
+# etc.) in tool docstrings or returned text gets mangled on the client side.
+if sys.platform == "win32":
+    sys.stdout.reconfigure(encoding="utf-8")
+    sys.stdin.reconfigure(encoding="utf-8")
+
 from mcp.server.fastmcp import FastMCP
 
 # ── IPC setup ────────────────────────────────────────────────────────────────
@@ -35,8 +43,13 @@ LOCK_FILE = os.path.join(IPC_DIR, "lock")
 os.makedirs(IPC_DIR, exist_ok=True)
 
 
-def _load_timeout(default=60):
-    """Timeout is configurable via <ipc_dir>/config.json (hardening layer)."""
+def _load_timeout(default=120):
+    """Timeout is configurable via <ipc_dir>/config.json (hardening layer).
+
+    Default is 120s: a live publish_web_layer call took ~32s, and the old 15s
+    timeout reported a false "Timeout" while the operation was quietly succeeding
+    server-side. Override per-install via config.json's timeout_seconds.
+    """
     try:
         with open(os.path.join(IPC_DIR, "config.json"), "r", encoding="utf-8") as f:
             return int(json.load(f).get("timeout_seconds", default))
@@ -44,7 +57,7 @@ def _load_timeout(default=60):
         return default
 
 
-TIMEOUT = _load_timeout()  # seconds to wait for ArcGIS Pro to respond (was 15)
+TIMEOUT = _load_timeout()  # seconds to wait for ArcGIS Pro to respond (was 15, now 120)
 
 mcp = FastMCP(
     "ArcGIS Pro",
@@ -637,6 +650,11 @@ def publish_web_layer(layer: str, service_name: str, summary: str = "", tags: st
     Publish a layer as a hosted feature service to ArcGIS Online / Enterprise, using
     whichever portal is currently active in ArcGIS Pro. Always confirm with the user
     before calling this — it creates or overwrites content on their portal account.
+
+    Publishes over REST via the ArcGIS API for Python (reusing your existing Pro
+    sign-in — no separate login needed), not the classic arcpy.server pipeline,
+    which doesn't work reliably from this bridge. Can take up to ~30-60s for
+    typical layers; this is normal, don't treat a slow response as a failure.
 
     Args:
         layer: Exact layer name as shown in the Contents pane
