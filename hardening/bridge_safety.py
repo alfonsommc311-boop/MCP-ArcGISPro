@@ -21,6 +21,12 @@ def _tool_aliases(tool):
     return forms
 
 
+def _tool_aliases_ci(tool):
+    """Aliases case-folded for comparison. ArcPy GP tool names are case-insensitive,
+    so a block on 'management.Delete' must also catch 'management.delete'."""
+    return {f.casefold() for f in _tool_aliases(tool)}
+
+
 def check_gp_tool(tool: str, cfg) -> None:
     """Validate a GP tool name against policy.
 
@@ -32,12 +38,13 @@ def check_gp_tool(tool: str, cfg) -> None:
         return
     if not tool:
         raise SafetyError("empty GP tool name")
-    # Blocklist: compare canonicalized aliases so a block on 'management.Delete'
-    # cannot be bypassed by calling 'Delete_management' (or vice versa).
+    # Blocklist: compare canonicalized, case-folded aliases so a block on
+    # 'management.Delete' cannot be bypassed by calling 'Delete_management'
+    # (alias form) or 'management.delete' (different case).
     blocked_forms = set()
     for b in (getattr(cfg, "blocked_gp_tools", []) or []):
-        blocked_forms |= _tool_aliases(b)
-    if _tool_aliases(tool) & blocked_forms:
+        blocked_forms |= _tool_aliases_ci(b)
+    if _tool_aliases_ci(tool) & blocked_forms:
         raise SafetyError("GP tool '{}' is blocked by policy.".format(tool))
     prefixes = getattr(cfg, "allowed_gp_prefixes", []) or []
     if not prefixes:

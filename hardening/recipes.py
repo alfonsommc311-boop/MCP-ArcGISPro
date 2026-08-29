@@ -215,6 +215,20 @@ def value_counts(arcpy, m, layer_name, field, top=20, **_):
             "top": [{"value": k, "count": c} for k, c in ordered]}
 
 
+# GP tools each recipe invokes internally. handle_recipe() runs check_gp_tool()
+# on every entry here BEFORE dispatch, so recipes are subject to the same
+# safe_mode allowlist/blocklist as run_geoprocessing — no unrestricted side door.
+# A recipe that only reads (SearchCursor / Describe / ListFields / mp exports)
+# declares no GP tool. Add every management.* / analysis.* tool a new recipe calls
+# here, or it runs ungated. `needs_execute_python` (function attr, default False)
+# gates any future recipe that runs arbitrary/eval'd code behind check_execute_python.
+qa_layer.gp_tools = ["management.GetCount"]
+export_attributes_csv.gp_tools = []
+batch_export_layouts.gp_tools = []
+field_stats.gp_tools = []
+value_counts.gp_tools = []
+
+
 RECIPES = {
     "qa_layer": qa_layer,
     "export_attributes_csv": export_attributes_csv,

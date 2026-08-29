@@ -835,6 +835,15 @@ def handle_recipe(args):
     fn = RECIPES.get(name)
     if not fn:
         raise ValueError("Unknown recipe '%s'. Available: %s" % (name, sorted(RECIPES)))
+    # Gate recipes through the SAME safe_mode policy as run_geoprocessing/execute_python
+    # so they aren't an unrestricted side door: every GP tool a recipe declares must
+    # pass check_gp_tool (allowlist + blocklist), and any recipe that runs arbitrary
+    # code must pass check_execute_python. A recipe that reads only (cursors/Describe/
+    # mp exports) declares no GP tool and is allowed. Raises SafetyError if blocked.
+    for _t in (getattr(fn, "gp_tools", []) or []):
+        check_gp_tool(_t, CFG)
+    if getattr(fn, "needs_execute_python", False):
+        check_execute_python(CFG)
     # Use _get_map() (falls back to the first map when no view is active) instead of
     # _proj.activeMap (None without an open view). Defensive None fallback for recipes
     # that don't need a map (e.g. batch_export_layouts).
