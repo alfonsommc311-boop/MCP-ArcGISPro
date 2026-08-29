@@ -591,19 +591,29 @@ def handle_publish_web_layer(args):
 
     # arcpy has no equivalent of the old arcpy.mapping.AnalyzeForSD / the Pro UI's
     # "Analyze" step for feature layers — Esri has marked that gap "will not be
-    # addressed". The one failure mode we CAN catch ahead of time: hosted feature
-    # layers require true unique numeric IDs, which shapefiles don't provide (Pro
-    # UI Analyzer error 00374, severity High). Catch it here with an actionable
-    # message instead of a generic ERROR 999999 out of StageService.
-    catalog_path = (arcpy.Describe(layers[0]).catalogPath or "").lower()
-    if catalog_path.endswith(".shp"):
-        raise RuntimeError(
-            f"'{layer}' is backed by a shapefile — hosted feature layers require true "
-            "unique numeric IDs, which shapefiles don't provide (Analyzer error 00374 "
-            "in the Pro UI). Convert it to a file geodatabase feature class first, e.g. "
-            f"run_geoprocessing('management.CopyFeatures', ['{layer}', "
-            "'C:/path/to/output.gdb/name']), then publish that instead."
-        )
+    # addressed". But one specific, very common failure (Analyzer error 00374,
+    # "Unique numeric IDs are not assigned") we CAN both detect AND fix ahead of
+    # time: it's a Map Properties setting (useServiceLayerIDs), not a data format
+    # issue — live-confirmed NOT specific to shapefiles. Auto-assign IDs the same
+    # way the Pro UI's "Auto-Assign IDs Sequentially" does, preserving any IDs
+    # already set (e.g. for a stable overwrite of an existing service).
+    m_cim = m.getDefinition("V3")
+    if not m_cim.useServiceLayerIDs:
+        m_cim.useServiceLayerIDs = True
+        m.setDefinition(m_cim)
+
+    items = list(m.listLayers()) + list(m.listTables())
+    cims = [(it, it.getDefinition("V3")) for it in items]
+    used_ids = {c.serviceLayerID for _, c in cims if c.serviceLayerID != -1}
+    next_id = 0
+    for it, cim in cims:
+        if cim.serviceLayerID == -1:
+            while next_id in used_ids:
+                next_id += 1
+            cim.serviceLayerID = next_id
+            used_ids.add(next_id)
+            it.setDefinition(cim)
+        next_id += 1
 
     work_dir = os.path.join(IPC_DIR, "publish")
     os.makedirs(work_dir, exist_ok=True)

@@ -521,11 +521,11 @@ def publish_web_layer(layer: str, service_name: str, summary: str = "", tags: st
     whichever portal is currently active in ArcGIS Pro. Always confirm with the user
     before calling this — it creates or overwrites content on their portal account.
 
-    Requires: the active portal must have a hosting server federated to it (check with
-    ping()'s hint or a failed call's error — not something this bridge can fix). The
-    layer must NOT be backed by a shapefile — hosted feature layers require true unique
-    numeric IDs, which shapefiles don't provide. Convert to a file geodatabase feature
-    class first with run_geoprocessing('management.CopyFeatures', [...]) if needed.
+    Requires: the active portal must have a hosting server federated to it. If it
+    doesn't, this fails with a generic ArcGIS ERROR 999999 that this bridge cannot
+    resolve on its own — that's a portal admin task, tell the user to check with
+    whoever administers their portal. Layer/table service IDs are auto-assigned as
+    needed, matching the Pro UI's "Auto-Assign IDs Sequentially" (Analyzer error 00374).
 
     Args:
         layer: Exact layer name as shown in the Contents pane
