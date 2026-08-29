@@ -209,6 +209,31 @@ def handle_select_by_attribute(args):
     return _ok({"layer": layer, "selectedCount": count, "whereClause": where_clause})
 
 
+def handle_update_features(args):
+    """Bulk-set the same field value(s) on every row matching where_clause.
+    For per-row computed values, use execute_python with an UpdateCursor instead."""
+    layer = args.get("layer")
+    where_clause = args.get("where_clause", "")
+    updates = args.get("updates")
+    if not layer:
+        raise ValueError("'layer' is required")
+    if not updates or not isinstance(updates, dict):
+        raise ValueError("'updates' is required — a dict of {field_name: new_value}")
+    m = _get_map()
+    layers = m.listLayers(layer)
+    if not layers:
+        raise RuntimeError(f"Layer '{layer}' not found.")
+
+    fields = list(updates.keys())
+    values = list(updates.values())
+    updated = 0
+    with arcpy.da.UpdateCursor(layers[0], fields, where_clause) as cur:
+        for _ in cur:
+            cur.updateRow(values)
+            updated += 1
+    return _ok({"layer": layer, "whereClause": where_clause, "fields": fields, "updatedCount": updated})
+
+
 def handle_save_project(_args):
     _proj.save()
     return _ok({"saved": _proj.filePath})
@@ -524,6 +549,64 @@ def handle_export_layout(args):
     return _ok({"exported": output, "layout": name, "format": fmt})
 
 
+def handle_publish_web_layer(args):
+    """Publish a layer as a hosted feature service to the ArcGIS Pro project's
+    active portal (ArcGIS Online or Enterprise). Uses arcpy.mp.CreateWebLayerSDDraft
+    -> arcpy.server.StageService -> arcpy.server.UploadServiceDefinition.
+    Requires the user to already be signed in to a portal in ArcGIS Pro."""
+    layer        = args.get("layer")
+    service_name = args.get("service_name")
+    summary      = args.get("summary", "")
+    tags         = args.get("tags", "")
+    public       = bool(args.get("public", False))
+    overwrite    = bool(args.get("overwrite", False))
+
+    if not layer:
+        raise ValueError("'layer' is required")
+    if not service_name:
+        raise ValueError("'service_name' is required")
+
+    portal = arcpy.GetActivePortalURL()
+    if not portal:
+        raise RuntimeError(
+            "No active portal. Sign in to ArcGIS Online / Enterprise in ArcGIS Pro "
+            "first (Settings > Portals), then set that portal active."
+        )
+
+    m = _get_map()
+    layers = m.listLayers(layer)
+    if not layers:
+        raise RuntimeError(f"Layer '{layer}' not found.")
+
+    work_dir = os.path.join(IPC_DIR, "publish")
+    os.makedirs(work_dir, exist_ok=True)
+    sddraft = os.path.join(work_dir, f"{service_name}.sddraft")
+    sd      = os.path.join(work_dir, f"{service_name}.sd")
+
+    arcpy.mp.CreateWebLayerSDDraft(
+        layers[0], sddraft, service_name,
+        server_type="MY_HOSTED_SERVICES",
+        service_type="FEATURE_ACCESS",
+        overwrite_existing_service=overwrite,
+        summary=summary,
+        tags=tags,
+    )
+    arcpy.server.StageService(sddraft, sd)
+    arcpy.server.UploadServiceDefinition(
+        sd, "My Hosted Services",
+        in_override="OVERRIDE_DEFINITION" if overwrite else "USE_DEFINITION",
+        in_public="PUBLIC" if public else "PRIVATE",
+    )
+
+    return _ok({
+        "layer": layer,
+        "serviceName": service_name,
+        "portal": portal,
+        "public": public,
+        "sdFile": sd,
+    })
+
+
 # ── Dispatch table ────────────────────────────────────────────────────────────
 
 HANDLERS = {
@@ -537,6 +620,7 @@ HANDLERS = {
     "zoom_to_layer":       handle_zoom_to_layer,
     "count_features":      handle_count_features,
     "select_by_attribute": handle_select_by_attribute,
+    "update_features":     handle_update_features,
     "save_project":        handle_save_project,
     "run_geoprocessing":   handle_run_geoprocessing,
     "get_layer_features":  handle_get_layer_features,
@@ -556,6 +640,7 @@ HANDLERS = {
     "execute_python":      handle_execute_python,
     "list_layouts":        handle_list_layouts,
     "export_layout":       handle_export_layout,
+    "publish_web_layer":   handle_publish_web_layer,
 }
 
 # ── Background polling thread ─────────────────────────────────────────────────
