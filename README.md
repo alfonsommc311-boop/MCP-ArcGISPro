@@ -120,7 +120,7 @@ Just talk to Claude naturally. Examples:
 
 ---
 
-## Available Tools (30)
+## Available Tools (29)
 
 | Category | Tools |
 |---|---|
