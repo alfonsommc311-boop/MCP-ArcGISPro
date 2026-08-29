@@ -204,8 +204,11 @@ def handle_select_by_attribute(args):
     layers = m.listLayers(layer)
     if not layers:
         raise RuntimeError(f"Layer '{layer}' not found.")
-    result = arcpy.management.SelectLayerByAttribute(layers[0], selection_type, where_clause)
-    count = int(arcpy.management.GetCount(result).getOutput(0))
+    # Count on layers[0] directly, not the SelectLayerByAttribute Result object —
+    # the Result token doesn't resolve from this background thread (ERROR 000732),
+    # even though the selection itself applies fine to the real Layer object.
+    arcpy.management.SelectLayerByAttribute(layers[0], selection_type, where_clause)
+    count = int(arcpy.management.GetCount(layers[0]).getOutput(0))
     return _ok({"layer": layer, "selectedCount": count, "whereClause": where_clause})
 
 
@@ -282,10 +285,18 @@ def handle_list_fields(args):
     dataset = args.get("dataset")
     if not dataset:
         raise ValueError("'dataset' is required")
-    if not arcpy.Exists(dataset):
+
+    # Accept a Contents-pane layer name (not just a path) as the docstring promises —
+    # arcpy.ListFields() doesn't reliably resolve a bare layer name from this thread.
+    resolved = dataset
+    layers = _get_map().listLayers(dataset)
+    if layers:
+        resolved = arcpy.Describe(layers[0]).catalogPath
+
+    if not arcpy.Exists(resolved):
         raise RuntimeError(f"Dataset not found: {dataset}")
     fields = []
-    for f in arcpy.ListFields(dataset):
+    for f in arcpy.ListFields(resolved):
         fields.append({
             "name": f.name,
             "aliasName": f.aliasName,
@@ -578,25 +589,46 @@ def handle_publish_web_layer(args):
     if not layers:
         raise RuntimeError(f"Layer '{layer}' not found.")
 
+    # arcpy has no equivalent of the old arcpy.mapping.AnalyzeForSD / the Pro UI's
+    # "Analyze" step for feature layers — Esri has marked that gap "will not be
+    # addressed". The one failure mode we CAN catch ahead of time: hosted feature
+    # layers require true unique numeric IDs, which shapefiles don't provide (Pro
+    # UI Analyzer error 00374, severity High). Catch it here with an actionable
+    # message instead of a generic ERROR 999999 out of StageService.
+    catalog_path = (arcpy.Describe(layers[0]).catalogPath or "").lower()
+    if catalog_path.endswith(".shp"):
+        raise RuntimeError(
+            f"'{layer}' is backed by a shapefile — hosted feature layers require true "
+            "unique numeric IDs, which shapefiles don't provide (Analyzer error 00374 "
+            "in the Pro UI). Convert it to a file geodatabase feature class first, e.g. "
+            f"run_geoprocessing('management.CopyFeatures', ['{layer}', "
+            "'C:/path/to/output.gdb/name']), then publish that instead."
+        )
+
     work_dir = os.path.join(IPC_DIR, "publish")
     os.makedirs(work_dir, exist_ok=True)
     sddraft = os.path.join(work_dir, f"{service_name}.sddraft")
     sd      = os.path.join(work_dir, f"{service_name}.sd")
 
-    arcpy.mp.CreateWebLayerSDDraft(
-        layers[0], sddraft, service_name,
-        server_type="MY_HOSTED_SERVICES",
-        service_type="FEATURE_ACCESS",
-        overwrite_existing_service=overwrite,
-        summary=summary,
-        tags=tags,
-    )
-    arcpy.server.StageService(sddraft, sd)
-    arcpy.server.UploadServiceDefinition(
-        sd, "My Hosted Services",
-        in_override="OVERRIDE_DEFINITION" if overwrite else "USE_DEFINITION",
-        in_public="PUBLIC" if public else "PRIVATE",
-    )
+    try:
+        arcpy.mp.CreateWebLayerSDDraft(
+            layers[0], sddraft, service_name,
+            server_type="MY_HOSTED_SERVICES",
+            service_type="FEATURE_ACCESS",
+            overwrite_existing_service=overwrite,
+            summary=summary,
+            tags=tags,
+        )
+        arcpy.server.StageService(sddraft, sd)
+        arcpy.server.UploadServiceDefinition(
+            sd, "My Hosted Services",
+            in_override="OVERRIDE_DEFINITION" if overwrite else "USE_DEFINITION",
+            in_public="PUBLIC" if public else "PRIVATE",
+        )
+    except Exception as e:
+        # arcpy.GetMessages() can carry warning-level detail (e.g. data-copy notices)
+        # that doesn't make it into the raised exception's own text.
+        raise RuntimeError(f"{e}\nGeoprocessing messages: {arcpy.GetMessages()}")
 
     return _ok({
         "layer": layer,
