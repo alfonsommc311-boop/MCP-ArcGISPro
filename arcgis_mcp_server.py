@@ -521,11 +521,17 @@ def publish_web_layer(layer: str, service_name: str, summary: str = "", tags: st
     whichever portal is currently active in ArcGIS Pro. Always confirm with the user
     before calling this — it creates or overwrites content on their portal account.
 
-    Requires: the active portal must have a hosting server federated to it. If it
-    doesn't, this fails with a generic ArcGIS ERROR 999999 that this bridge cannot
-    resolve on its own — that's a portal admin task, tell the user to check with
-    whoever administers their portal. Layer/table service IDs are auto-assigned as
-    needed, matching the Pro UI's "Auto-Assign IDs Sequentially" (Analyzer error 00374).
+    Layer/table service IDs are auto-assigned as needed (matching the Pro UI's
+    "Auto-Assign IDs Sequentially", Analyzer error 00374) — you don't need to do
+    anything about that yourself.
+
+    Known limitation (live-confirmed, not something you can fix by retrying or
+    rephrasing): this can fail with a generic ArcGIS ERROR 999999 even when the
+    exact same data publishes fine through ArcGIS Pro's own Share As Web Layer UI
+    seconds later. Most likely cause is this bridge's background-thread execution
+    model, not the data, the layer, or the portal. If this tool fails with
+    ERROR 999999, tell the user to try publishing through the Pro UI directly
+    instead of retrying this tool.
 
     Args:
         layer: Exact layer name as shown in the Contents pane

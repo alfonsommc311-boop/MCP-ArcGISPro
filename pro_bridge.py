@@ -638,7 +638,27 @@ def handle_publish_web_layer(args):
     except Exception as e:
         # arcpy.GetMessages() can carry warning-level detail (e.g. data-copy notices)
         # that doesn't make it into the raised exception's own text.
-        raise RuntimeError(f"{e}\nGeoprocessing messages: {arcpy.GetMessages()}")
+        #
+        # Live-confirmed 2026-08-29: StageService/CreateWebLayerSDDraft can fail with
+        # a generic ERROR 999999 from THIS bridge even when the exact same map/layer
+        # publishes fine through the Pro UI seconds later on the same portal, account,
+        # and machine -- with map-vs-layer object and layer-ID assignment ruled out as
+        # the difference. The one thing that does differ is which thread runs it: the
+        # UI runs on ArcGIS Pro's main thread; every bridge command (including this
+        # one) runs on the background polling thread. Best explanation: StageService
+        # needs the signed-in portal session, and that session context isn't usable
+        # from a background thread -- unlike e.g. GetActivePortalURL(), which just
+        # reads config and works fine from here. Not fixable without restructuring
+        # this bridge to marshal specific calls onto the main thread, which is a much
+        # bigger change than anything else here -- so surface it as a hint instead of
+        # silently retrying forever.
+        raise RuntimeError(
+            f"{e}\nGeoprocessing messages: {arcpy.GetMessages()}\n"
+            "If this is a generic ERROR 999999 and the layer/map publishes fine "
+            "through ArcGIS Pro's own Share As Web Layer UI, this bridge's "
+            "background-thread architecture is the likely cause, not your data or "
+            "portal — tell the user to publish through the Pro UI directly for now."
+        )
 
     return _ok({
         "layer": layer,

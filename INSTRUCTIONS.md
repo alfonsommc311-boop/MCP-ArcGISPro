@@ -119,6 +119,8 @@ Before calling it, confirm with the user:
 
 If `ping()` or the tool's error indicates no active portal, tell the user to sign in via ArcGIS Pro's Settings > Portals first — this bridge cannot sign in on their behalf.
 
+**Known limitation:** `publish_web_layer` can fail with a generic `ERROR 999999` for reasons unrelated to the data or the portal — most likely this bridge's background-thread execution model, which the same operation doesn't hit when run through ArcGIS Pro's own UI. Don't retry this tool repeatedly on a 999999 failure — tell the user to try Share As Web Layer in the Pro UI directly instead.
+
 ---
 
 ## 10. Be Transparent About What You Did
