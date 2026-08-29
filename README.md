@@ -16,6 +16,8 @@ Connects Claude Desktop (or any MCP client) to a live ArcGIS Pro session, enabli
 - List layers, fields, feature classes, rasters, and tables
 - Create layouts and export maps (PDF, PNG, JPG, TIF, SVG, EPS)
 - Zoom to layers, toggle visibility, save projects
+- Bulk-edit attribute values on features matching a query
+- Publish a layer as a hosted feature service to ArcGIS Online / Enterprise
 - Execute arbitrary ArcPy / arcpy.mp code
 
 ---
@@ -25,6 +27,7 @@ Connects Claude Desktop (or any MCP client) to a live ArcGIS Pro session, enabli
 - ArcGIS Pro 3.x (tested on 3.6.1)
 - Claude Desktop
 - [uv](https://docs.astral.sh/uv/getting-started/installation/) — lightweight Python package manager
+- The `arcgis` package (ArcGIS API for Python) in ArcGIS Pro's Python environment, for `publish_web_layer` only — bundled by default in ArcGIS Pro's `arcgispro-py3` environment on recent versions; the rest of the bridge doesn't need it
 
 
 ---
@@ -116,11 +119,15 @@ Just talk to Claude naturally. Examples:
 
 > *"Select all features where KECAMATAN = 'Semarang Tengah' and count them"*
 
+> *"Set STATUS to 'Verified' for every feature where INSPECTED = 1"*
+
+> *"Publish the parcels layer to ArcGIS Online as a private hosted layer named 'Parcels_2026'"*
+
 > *"Run a slope analysis on my DEM raster"*
 
 ---
 
-## Available Tools (30)
+## Available Tools (31)
 
 | Category | Tools |
 |---|---|
@@ -131,8 +138,10 @@ Just talk to Claude naturally. Examples:
 | **Data** | `describe_data`, `list_directory`, `list_fields`, `get_layer_features`, `get_unique_values` |
 | **Workspace** | `set_workspace`, `get_workspace`, `list_feature_classes`, `list_rasters`, `list_tables` |
 | **Selection** | `select_by_attribute`, `clear_selection`, `count_features` |
+| **Editing** | `update_features` *(bulk-set field values on matching rows)* |
 | **Geoprocessing** | `run_geoprocessing` *(any arcpy tool by dotted name)* |
 | **Layout & Export** | `list_layouts`, `create_layout`, `export_layout` |
+| **Sharing** | `publish_web_layer` *(hosted feature service to ArcGIS Online/Enterprise)* |
 | **Advanced** | `execute_python` *(arbitrary arcpy/arcpy.mp code)* |
 
 ---
@@ -144,20 +153,23 @@ Claude Desktop
     ↓  stdio (MCP)
 arcgis_mcp_server.py   ← runs via uv, any Python
     ↓  file-based IPC  (~/.arcgis_mcp/)
-pro_bridge.py          ← runs in ArcGIS Pro's Python window
-    ↓  arcpy.mp API
-ArcGIS Pro (live session)
+pro_bridge.py          ← runs in ArcGIS Pro's Python window, on a background thread
+    ↓                                          ↓
+arcpy / arcpy.mp                        arcgis (ArcGIS API for Python)
+    ↓                                          ↓
+ArcGIS Pro (live session)               ArcGIS Online / Enterprise portal, over REST
 ```
 
 The bridge uses file-based IPC (command / result JSON files in `~/.arcgis_mcp/`) — no sockets, no named pipes, no compilation required.
+
+Almost everything goes through `arcpy`/`arcpy.mp` against the live local session. **`publish_web_layer` is the one exception**, and deliberately so: `arcpy.server`/`arcpy.mp.CreateWebLayerSDDraft` are COM-based and need the signed-in portal session in a way that's only available on ArcGIS Pro's true main thread — not the background thread this bridge dispatches every command from. Rather than block on that, `publish_web_layer` uses the `arcgis` package instead, which talks to the portal over plain REST (reusing the same Pro sign-in via `arcpy.GetSigninToken()`, no separate login) — REST has no thread affinity, so it works fine from here. Same pattern is available for other portal-side operations (content management, sharing, editing an already-published layer, user/group admin) if this bridge grows in that direction later — those aren't subject to the thread limitation either.
 
 ---
 
 ## Known Limitations
 
-- **Opening a map view automatically** is not possible via Python/ArcPy alone (requires ArcGIS Pro C# SDK). The user must open the map view manually once per session by double-clicking it in the Catalog pane. All other operations work without an open view.
-- **ArcGIS Online / Enterprise publishing** is not yet implemented.
-- **Interactive editing** (sketch tools, attribute forms) requires the ArcGIS Pro UI and cannot be automated.
+- **Opening a map view automatically** is not possible via Python/ArcPy alone — it's an application-shell action that lives in the compiled ArcGIS Pro SDK, not the arcpy document API. The user must open the map view manually once per session by double-clicking it in the Catalog pane. All other operations work without an open view — for zooming/visualizing a layer specifically, `create_layout()` + `export_layout()` render headlessly and don't need an open view at all.
+- **Interactive sketch-tool digitizing** (drawing features by hand) requires the ArcGIS Pro UI and cannot be automated — by definition, freehand digitizing needs a human at the screen. Non-interactive attribute edits don't have this limitation: use `update_features`.
 
 ---
 

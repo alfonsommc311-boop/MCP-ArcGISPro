@@ -25,6 +25,14 @@ import json
 import time
 import sys
 
+# On Windows, stdout/stdin default to the system ANSI code page when piped (not
+# attached to a real console) rather than UTF-8 — exactly the case for an MCP
+# stdio server. Without this, any non-ASCII character (em dashes, curly quotes,
+# etc.) in tool docstrings or returned text gets mangled on the client side.
+if sys.platform == "win32":
+    sys.stdout.reconfigure(encoding="utf-8")
+    sys.stdin.reconfigure(encoding="utf-8")
+
 from mcp.server.fastmcp import FastMCP
 
 # ── IPC setup ────────────────────────────────────────────────────────────────
@@ -35,8 +43,13 @@ LOCK_FILE = os.path.join(IPC_DIR, "lock")
 os.makedirs(IPC_DIR, exist_ok=True)
 
 
-def _load_timeout(default=60):
-    """Timeout is configurable via <ipc_dir>/config.json (hardening layer)."""
+def _load_timeout(default=120):
+    """Timeout is configurable via <ipc_dir>/config.json (hardening layer).
+
+    Default is 120s: a live publish_web_layer call took ~32s, and the old 15s
+    timeout reported a false "Timeout" while the operation was quietly succeeding
+    server-side. Override per-install via config.json's timeout_seconds.
+    """
     try:
         with open(os.path.join(IPC_DIR, "config.json"), "r", encoding="utf-8") as f:
             return int(json.load(f).get("timeout_seconds", default))
@@ -44,7 +57,7 @@ def _load_timeout(default=60):
         return default
 
 
-TIMEOUT = _load_timeout()  # seconds to wait for ArcGIS Pro to respond (was 15)
+TIMEOUT = _load_timeout()  # seconds to wait for ArcGIS Pro to respond (was 15, now 120)
 
 mcp = FastMCP(
     "ArcGIS Pro",
@@ -71,6 +84,17 @@ geoprocessing → add result to map → zoom_to_layer → create_layout → expo
 ## zoom_to_layer
 Only works when a map view is open. If the tool returns a warning instead of zooming,
 tell the user to open the map in ArcGIS Pro (double-click it in the Catalog pane).
+To show a layer's extent without needing an open view at all, use create_layout()
++ export_layout() instead — layouts render headlessly and don't need an active view.
+
+## update_features
+Bulk-sets the same value(s) on every row matching where_clause — there is no undo.
+Always state the where_clause and the exact field/value changes and get explicit
+confirmation before calling this, especially with where_clause="" (every row).
+
+## publish_web_layer
+Creates or overwrites content on the user's ArcGIS Online/Enterprise portal. Always
+confirm the service name and whether it should be public before calling this.
 
 ## When no specific tool covers the need
 Use execute_python(code) to run any arcpy/arcpy.mp code directly.
@@ -233,6 +257,27 @@ def select_by_attribute(layer: str, where_clause: str, selection_type: str = "NE
         "layer": layer,
         "where_clause": where_clause,
         "selection_type": selection_type,
+    }))
+
+
+@mcp.tool()
+def update_features(layer: str, where_clause: str, updates: dict) -> str:
+    """
+    Update attribute values on features matching a WHERE clause. Sets the same
+    field value(s) on every matching row (bulk update). For per-row computed
+    values (e.g. incrementing a counter), use execute_python with an UpdateCursor instead.
+
+    Args:
+        layer: Exact layer name as shown in the Contents pane
+        where_clause: SQL expression selecting which rows to update (e.g. "STATUS = 'Pending'").
+                      Pass "" to update every row in the layer — be deliberate about this.
+        updates: Dict of {field_name: new_value} applied to every matching row,
+                 e.g. {"STATUS": "Verified", "REVIEWED_BY": "GIS Team"}
+    """
+    return _result_text(_call("update_features", {
+        "layer": layer,
+        "where_clause": where_clause,
+        "updates": updates,
     }))
 
 
@@ -480,6 +525,37 @@ def get_layer_features(layer: str, limit: int = 10, fields: list = None) -> str:
         "layer": layer,
         "limit": limit,
         "fields": fields or [],
+    }))
+
+
+@mcp.tool()
+def publish_web_layer(layer: str, service_name: str, summary: str = "", tags: str = "",
+                      public: bool = False, overwrite: bool = False) -> str:
+    """
+    Publish a layer as a hosted feature service to ArcGIS Online / Enterprise, using
+    whichever portal is currently active in ArcGIS Pro. Always confirm with the user
+    before calling this — it creates or overwrites content on their portal account.
+
+    Publishes over REST via the ArcGIS API for Python (reusing your existing Pro
+    sign-in — no separate login needed), not the classic arcpy.server pipeline,
+    which doesn't work reliably from this bridge. Can take up to ~30-60s for
+    typical layers; this is normal, don't treat a slow response as a failure.
+
+    Args:
+        layer: Exact layer name as shown in the Contents pane
+        service_name: Name for the hosted feature service (must be unique in the target folder)
+        summary: Short description shown on the portal item (optional)
+        tags: Comma-separated tags for the portal item (optional)
+        public: Share publicly if True; private (owner-only) if False (default: False)
+        overwrite: Overwrite an existing service with the same name if True (default: False)
+    """
+    return _result_text(_call("publish_web_layer", {
+        "layer": layer,
+        "service_name": service_name,
+        "summary": summary,
+        "tags": tags,
+        "public": public,
+        "overwrite": overwrite,
     }))
 
 

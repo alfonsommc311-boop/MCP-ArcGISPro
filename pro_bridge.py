@@ -251,9 +251,37 @@ def handle_select_by_attribute(args):
     layers = m.listLayers(layer)
     if not layers:
         raise RuntimeError(f"Layer '{layer}' not found.")
-    result = arcpy.management.SelectLayerByAttribute(layers[0], selection_type, where_clause)
-    count = int(arcpy.management.GetCount(result).getOutput(0))
+    # Count on layers[0] directly, not the SelectLayerByAttribute Result object —
+    # the Result token doesn't resolve from this background thread (ERROR 000732),
+    # even though the selection itself applies fine to the real Layer object.
+    arcpy.management.SelectLayerByAttribute(layers[0], selection_type, where_clause)
+    count = int(arcpy.management.GetCount(layers[0]).getOutput(0))
     return _ok({"layer": layer, "selectedCount": count, "whereClause": where_clause})
+
+
+def handle_update_features(args):
+    """Bulk-set the same field value(s) on every row matching where_clause.
+    For per-row computed values, use execute_python with an UpdateCursor instead."""
+    layer = args.get("layer")
+    where_clause = args.get("where_clause", "")
+    updates = args.get("updates")
+    if not layer:
+        raise ValueError("'layer' is required")
+    if not updates or not isinstance(updates, dict):
+        raise ValueError("'updates' is required — a dict of {field_name: new_value}")
+    m = _get_map()
+    layers = m.listLayers(layer)
+    if not layers:
+        raise RuntimeError(f"Layer '{layer}' not found.")
+
+    fields = list(updates.keys())
+    values = list(updates.values())
+    updated = 0
+    with arcpy.da.UpdateCursor(layers[0], fields, where_clause) as cur:
+        for _ in cur:
+            cur.updateRow(values)
+            updated += 1
+    return _ok({"layer": layer, "whereClause": where_clause, "fields": fields, "updatedCount": updated})
 
 
 def handle_save_project(_args):
@@ -308,10 +336,18 @@ def handle_list_fields(args):
     dataset = args.get("dataset")
     if not dataset:
         raise ValueError("'dataset' is required")
-    if not arcpy.Exists(dataset):
+
+    # Accept a Contents-pane layer name (not just a path) as the docstring promises —
+    # arcpy.ListFields() doesn't reliably resolve a bare layer name from this thread.
+    resolved = dataset
+    layers = _get_map().listLayers(dataset)
+    if layers:
+        resolved = arcpy.Describe(layers[0]).catalogPath
+
+    if not arcpy.Exists(resolved):
         raise RuntimeError(f"Dataset not found: {dataset}")
     fields = []
-    for f in arcpy.ListFields(dataset):
+    for f in arcpy.ListFields(resolved):
         fields.append({
             "name": f.name,
             "aliasName": f.aliasName,
@@ -576,6 +612,100 @@ def handle_export_layout(args):
     return _ok({"exported": output, "layout": name, "format": fmt})
 
 
+def handle_publish_web_layer(args):
+    """Publish a layer as a hosted feature service to the ArcGIS Pro project's
+    active portal (ArcGIS Online or Enterprise). Uses the ArcGIS API for Python
+    (arcgis package) over REST, reusing the existing Pro sign-in token -- not
+    arcpy.server, which doesn't work reliably from this bridge's background thread.
+    Requires the user to already be signed in to a portal in ArcGIS Pro."""
+    layer        = args.get("layer")
+    service_name = args.get("service_name")
+    summary      = args.get("summary", "")
+    tags         = args.get("tags", "")
+    public       = bool(args.get("public", False))
+    overwrite    = bool(args.get("overwrite", False))
+
+    if not layer:
+        raise ValueError("'layer' is required")
+    if not service_name:
+        raise ValueError("'service_name' is required")
+
+    portal = arcpy.GetActivePortalURL()
+    if not portal:
+        raise RuntimeError(
+            "No active portal. Sign in to ArcGIS Online / Enterprise in ArcGIS Pro "
+            "first (Settings > Portals), then set that portal active."
+        )
+
+    m = _get_map()
+    layers = m.listLayers(layer)
+    if not layers:
+        raise RuntimeError(f"Layer '{layer}' not found.")
+    catalog_path = arcpy.Describe(layers[0]).catalogPath
+
+    # Uses the ArcGIS API for Python (arcgis package) over plain REST, reusing the
+    # existing Pro sign-in token via arcpy.GetSigninToken() -- deliberately NOT
+    # arcpy.mp.CreateWebLayerSDDraft / arcpy.server.StageService. Those are COM-based
+    # and need the signed-in portal session in a way that's only available on ArcGIS
+    # Pro's true main thread, which this bridge's background polling thread is not --
+    # confirmed with a controlled test: the identical call fails instantly with a
+    # generic ERROR 999999 from here, every time, but succeeds (in real time, ~10-30s)
+    # when run directly in the Python window's own console instead. REST calls have
+    # no such thread affinity, and this path is live-verified working from here.
+    from arcgis.gis import GIS
+    from arcgis.features import GeoAccessor
+
+    token_info = arcpy.GetSigninToken()
+    if not token_info:
+        raise RuntimeError("Could not get a sign-in token for the active portal.")
+    gis = GIS(portal, token=token_info["token"])
+
+    tag_list = [t.strip() for t in tags.split(",") if t.strip()] if tags else []
+
+    existing = [i for i in gis.content.search(
+        query=f'title:"{service_name}" AND owner:{gis.users.me.username}',
+        item_type="Feature Layer", max_items=10,
+    ) if i.title == service_name]
+
+    if existing and not overwrite:
+        raise RuntimeError(
+            f"A feature layer named '{service_name}' already exists "
+            f"(id={existing[0].id}). Pass overwrite=True to replace it, or choose a different name."
+        )
+
+    sdf = GeoAccessor.from_featureclass(catalog_path)
+
+    try:
+        if existing:
+            # True overwrite (same item/URL kept) rather than delete + republish --
+            # documented via the installed arcgis package's own to_featurelayer()
+            # docstring, not live-tested for this exact branch yet.
+            lyr_item = sdf.spatial.to_featurelayer(
+                title=service_name, gis=gis, tags=tag_list,
+                overwrite=True,
+                service={"featureServiceId": existing[0].id, "layer": 0},
+            )
+        else:
+            lyr_item = sdf.spatial.to_featurelayer(title=service_name, gis=gis, tags=tag_list)
+    except Exception as e:
+        raise RuntimeError(f"Publish failed: {e}")
+
+    if summary:
+        lyr_item.update(item_properties={"snippet": summary})
+    if public:
+        lyr_item.share(everyone=True)
+
+    return _ok({
+        "layer": layer,
+        "serviceName": service_name,
+        "portal": portal,
+        "public": public,
+        "itemId": lyr_item.id,
+        "url": lyr_item.homepage,
+        "overwritten": bool(existing),
+    })
+
+
 # ── Dispatch table ────────────────────────────────────────────────────────────
 
 HANDLERS = {
@@ -589,6 +719,7 @@ HANDLERS = {
     "zoom_to_layer":       handle_zoom_to_layer,
     "count_features":      handle_count_features,
     "select_by_attribute": handle_select_by_attribute,
+    "update_features":     handle_update_features,
     "save_project":        handle_save_project,
     "run_geoprocessing":   handle_run_geoprocessing,
     "get_layer_features":  handle_get_layer_features,
@@ -608,6 +739,7 @@ HANDLERS = {
     "execute_python":      handle_execute_python,
     "list_layouts":        handle_list_layouts,
     "export_layout":       handle_export_layout,
+    "publish_web_layer":   handle_publish_web_layer,
 }
 
 # ── Background polling thread ─────────────────────────────────────────────────
