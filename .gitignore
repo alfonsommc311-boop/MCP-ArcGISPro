@@ -1,4 +1,26 @@
+# Python
 __pycache__/
-*.pyc
+*.py[cod]
+*.pyo
 .venv/
 venv/
+*.egg-info/
+
+# uv
+.python-version
+
+# MCP IPC temp files
+.arcgis_mcp/
+
+# ArcGIS
+*.aprx
+*.gdb/
+*.aprx.lock
+
+# Claude Code
+.claude/
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
